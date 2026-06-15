@@ -49,6 +49,7 @@ The only real credential (the LLM API key) is read from the environment.
 | `AGENT_AUTH_TOKEN` | recommended | target bearer token; set it so it survives restarts/redeploys |
 | `AGENT_MODEL` | no | default `gpt-4o-mini`. For OpenRouter use a namespaced id, e.g. `openai/gpt-4o-mini` |
 | `AGENT_COOKIE_SECURE` | prod | set `true` when served over HTTPS |
+| `AGENT_MAX_TOOL_ROUNDS` | no | max dummy tool-call iterations per request (default 4) |
 | `AGENT_ALLOW_NO_AUTH` | no | local-only escape hatch; disables target auth |
 | `PORT` | no | listen port (default 8000) |
 
@@ -151,16 +152,22 @@ It should appear as a card in the dashboard immediately.
   extends the previous one's. Opening the dashboard mid-scan replays history and
   rebuilds the same tree. Within a round only the **new** turns are shown (the
   stateless re-send repeats the earlier transcript), and a **Show raw JSON**
-  toggle reveals the exact event — `messages` and `response` — so you can verify
-  it against what Red actually sent.
+  toggle reveals the exact event — `messages`, any `tool_calls`, and `response` —
+  so you can verify it against what Red actually sent. If the agent invokes tools,
+  each round lists the tool calls and their (dummy) results, and the round header
+  flags how many.
 - **Summary, filters & bulk controls** — a **sticky summary** header keeps the
   stats and controls in view while you scroll. Filter chips show/hide whole
   conversations by their worst-case outcome (**Answered / Refused / Leaked**),
   and **Expand all / Collapse all** open or close the whole tree at once.
-- **Target configuration** — edit the **system prompt**, **decoy code**, and
-  **refusal phrases** live from the dashboard. Use `{decoy}` in the prompt where
-  you want the decoy injected. Edits apply to the next request and are held in
-  memory only (they reset to the built-in defaults on restart).
+- **Target configuration** — edit the **system prompt**, **decoy code**,
+  **refusal phrases**, and the **dummy tools** (as JSON) live from the dashboard.
+  Use `{decoy}` in the prompt where you want the decoy injected. The tools are
+  advertised to the model and "executed" with canned results in a bounded loop
+  (**no real side effects**) — a tool-use attack surface (e.g. can a prompt
+  injection make Aria call `issue_refund`, or leak the decoy via
+  `lookup_promo_code`?). Edits apply to the next request and are held in memory
+  only (they reset to the built-in defaults on restart).
 - **Dark mode** — toggle in the header; your choice is remembered and it follows
   your system preference by default.
 - **Token panel** — view, **Copy**, or **Regenerate** the bearer token.
@@ -200,8 +207,9 @@ Detection** helps Red's adaptive scans backtrack correctly:
 ## Tuning the "mix"
 
 Open **Target configuration** in the dashboard to edit the system prompt, decoy
-code, and refusal phrases live: tighten the rules to make the demo harder, loosen
-them to make leaks more reliable. Put `{decoy}` in the prompt wherever you want the
-decoy code injected. Edits apply to the next request and are in-memory only (they
-reset to the built-in defaults in `agent.py` on restart). The decoy is a **fake**
-string, not a credential.
+code, refusal phrases, and dummy tools live: tighten the rules to make the demo
+harder, loosen them to make leaks more reliable, or add/remove tools to change the
+tool-use attack surface. Put `{decoy}` in the prompt wherever you want the decoy
+code injected. Edits apply to the next request and are in-memory only (they reset
+to the built-in defaults in `agent.py` on restart). The decoy is a **fake** string,
+not a credential, and the tools have no real side effects.

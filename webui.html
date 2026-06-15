@@ -160,6 +160,13 @@
   .round[data-status=leaked] .reply-content { border-color:var(--orange); background:var(--leak-bg); }
   mark { background:var(--mark-bg); color:var(--orange); font-weight:bold; padding:0 2px; }
 
+  .toolpill { flex:0 0 auto; font-size:11px; color:var(--purple); border:1px solid var(--line);
+      background:var(--surface-2); padding:2px 7px; white-space:nowrap; }
+  .toolcall { border:1px solid var(--line); border-left:3px solid var(--purple); background:var(--surface-2);
+      padding:8px 10px; margin-bottom:8px; }
+  .tool-name { font-size:13px; font-weight:bold; color:var(--purple); word-break:break-word; }
+  .tool-result { font-size:12.5px; color:var(--muted); white-space:pre-wrap; word-break:break-word; margin-top:4px; }
+
   .rawtoggle { margin-top:12px; background:none; border:1px solid var(--line); color:var(--muted);
       font-size:11px; padding:4px 10px; cursor:pointer; text-transform:uppercase; letter-spacing:.5px;
       font-family:inherit; }
@@ -204,6 +211,11 @@
           <label for="cfg-refusals">Refusal phrases (one per line)</label>
           <textarea id="cfg-refusals" rows="6" spellcheck="false"></textarea>
           <p class="help">A reply containing any of these (case-insensitive) is badged <strong>Refused</strong>. Badging only &mdash; not a security control.</p>
+        </div>
+        <div>
+          <label for="cfg-tools">Tools (JSON array of OpenAI function tools)</label>
+          <textarea id="cfg-tools" rows="10" spellcheck="false"></textarea>
+          <p class="help">Dummy tools advertised to the model &mdash; edited as JSON (invalid JSON blocks the save). They have <strong>no real side effects</strong>; the agent runs canned results in a bounded loop.</p>
         </div>
         <div class="actions">
           <button class="btn" id="cfg-save" type="button">Save configuration</button>
@@ -323,7 +335,8 @@
   });
 
   // ---- config panel ----
-  var cfgPrompt = byId("cfg-prompt"), cfgDecoy = byId("cfg-decoy"), cfgRefusals = byId("cfg-refusals");
+  var cfgPrompt = byId("cfg-prompt"), cfgDecoy = byId("cfg-decoy"),
+      cfgRefusals = byId("cfg-refusals"), cfgTools = byId("cfg-tools");
   var cfgToast = byId("cfg-toast");
   var cfgDefaults = null;
   function setCfgToast(msg) {
@@ -334,6 +347,7 @@
     cfgPrompt.value = d.system_prompt || "";
     cfgDecoy.value = d.decoy_code || "";
     cfgRefusals.value = (d.refusal_hints || []).join("\n");
+    cfgTools.value = JSON.stringify(d.tools || [], null, 2);
     window.__DECOY = d.decoy_code || "";
     if (d.defaults) cfgDefaults = d.defaults;
   }
@@ -354,14 +368,19 @@
   }
   byId("cfg-save").addEventListener("click", function () {
     var refusals = cfgRefusals.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
-    saveConfig({ system_prompt: cfgPrompt.value, decoy_code: cfgDecoy.value, refusal_hints: refusals },
+    var tools;
+    try { tools = JSON.parse(cfgTools.value || "[]"); }
+    catch (e) { setCfgToast("Tools: invalid JSON — not saved."); return; }
+    if (!Array.isArray(tools)) { setCfgToast("Tools must be a JSON array — not saved."); return; }
+    saveConfig({ system_prompt: cfgPrompt.value, decoy_code: cfgDecoy.value,
+                 refusal_hints: refusals, tools: tools },
                "Configuration saved — applies to the next request.");
   });
   byId("cfg-reset").addEventListener("click", function () {
     if (!cfgDefaults) return;
-    if (!confirm("Reset the system prompt, decoy code and refusal phrases to their defaults?")) return;
+    if (!confirm("Reset the system prompt, decoy code, refusal phrases and tools to their defaults?")) return;
     saveConfig({ system_prompt: cfgDefaults.system_prompt, decoy_code: cfgDefaults.decoy_code,
-                 refusal_hints: cfgDefaults.refusal_hints }, "Reset to defaults.");
+                 refusal_hints: cfgDefaults.refusal_hints, tools: cfgDefaults.tools }, "Reset to defaults.");
   });
 
   // ---- stats + connection ----
@@ -441,6 +460,19 @@
       (carried > 0 ? "New in this round" : "Sent by Red") + " (" + delta.length + " turn" + (delta.length === 1 ? "" : "s") + ")"));
     delta.forEach(function (m) { body.appendChild(turnEl(m)); });
 
+    var tcs = d.tool_calls || [];
+    if (tcs.length) {
+      body.appendChild(el("p", "seclabel", "Tool calls (" + tcs.length + ")"));
+      tcs.forEach(function (tc) {
+        var box = el("div", "toolcall");
+        var argstr;
+        try { argstr = JSON.stringify(tc.arguments); } catch (e) { argstr = String(tc.arguments); }
+        box.appendChild(el("div", "tool-name mono", tc.name + "(" + (argstr || "") + ")"));
+        box.appendChild(el("div", "tool-result mono", tc.result));
+        body.appendChild(box);
+      });
+    }
+
     body.appendChild(el("p", "seclabel reply", "Agent reply"));
     var reply = el("div", "reply-content");
     renderReply(reply, d.response || "", d.status);
@@ -451,7 +483,7 @@
     var pre = el("pre", "raw mono", JSON.stringify({
       conversation_id: d.conversation_id, conversation_seq: d.conversation_seq, round: d.round,
       id: d.id, ts: d.ts, model: d.model, status: d.status,
-      messages: d.messages, response: d.response
+      messages: d.messages, tool_calls: d.tool_calls || [], response: d.response
     }, null, 2));
     pre.hidden = true;
     body.appendChild(raw);
@@ -492,6 +524,8 @@
     var title = el("span", "round-title", "Round " + d.round);
     head.appendChild(title);
     head.appendChild(el("span", "round-preview", previewText(d.messages, false)));
+    var ntools = (d.tool_calls || []).length;
+    if (ntools) head.appendChild(el("span", "toolpill", "⚙ " + ntools + " tool" + (ntools === 1 ? "" : "s")));
     head.appendChild(el("span", "tag " + status, tagText(status)));
     var body = buildRoundBody(d, conv.lastLen);
     body.hidden = true;
