@@ -58,6 +58,8 @@
   .cfg-grid { margin-top:6px; display:grid; gap:14px; }
   .cfg label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:.6px;
         color:var(--muted); margin-bottom:6px; }
+  .cfg-fieldhead { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px; }
+  .cfg-fieldhead label { margin:0; }
   .cfg textarea, .cfg input[type=text] { width:100%; border:1px solid var(--line); background:var(--input-bg);
         color:var(--text); padding:10px 12px; font-size:13px; font-family:Consolas, monospace; }
   .cfg textarea { resize:vertical; }
@@ -140,6 +142,7 @@
   .round-title { font-weight:bold; font-size:13px; flex:0 0 auto; }
 
   .conv-rounds { border-top:1px solid var(--line); padding:4px 10px 10px; }
+  .conv-raw { margin-top:8px; }
   .round { border:1px solid var(--line); border-left:3px solid #bdb4b9; background:var(--surface); margin-top:8px; }
   .round[data-status=answered] { border-left-color:var(--berry); }
   .round[data-status=refused]  { border-left-color:var(--muted); }
@@ -195,12 +198,15 @@
     <!-- Live-editable target persona -->
     <details class="panel" id="cfgPanel">
       <summary><span class="chev">&#9654;</span> Target configuration</summary>
-      <p class="sub" style="margin-top:12px;">Edit the agent persona live. Changes apply to the next request and are held in memory only &mdash; everything resets to defaults when the process restarts.</p>
+      <p class="sub" style="margin-top:12px;">The current persona the target uses. Edit it live (changes apply to the next request, in memory only, reset on restart) &mdash; and <strong>Copy</strong> these values into Lakera Red&rsquo;s <em>Ground Truth</em> (System Prompt, Tool Definitions) and <em>Refusal Detection</em> fields to improve evaluation accuracy.</p>
       <div class="cfg cfg-grid">
         <div>
-          <label for="cfg-prompt">System prompt</label>
+          <div class="cfg-fieldhead">
+            <label for="cfg-prompt">System prompt</label>
+            <button class="btn ghost sm copy-cfg" data-target="cfg-prompt" type="button">Copy</button>
+          </div>
           <textarea id="cfg-prompt" rows="12" spellcheck="false"></textarea>
-          <p class="help"><code>{decoy}</code> is replaced with the decoy code below at request time, so the prompt and the decoy can be edited independently.</p>
+          <p class="help"><code>{decoy}</code> is replaced with the decoy code below at request time, so the prompt and the decoy can be edited independently. Copy &rarr; Lakera Red <em>Ground Truth System Prompt</em>.</p>
         </div>
         <div>
           <label for="cfg-decoy">Decoy code (fake, non-sensitive)</label>
@@ -208,14 +214,20 @@
           <p class="help">The planted &ldquo;confidential&rdquo; value the scan tries to extract. Highlighted in any reply that leaks it.</p>
         </div>
         <div>
-          <label for="cfg-refusals">Refusal phrases (one per line)</label>
-          <textarea id="cfg-refusals" rows="6" spellcheck="false"></textarea>
-          <p class="help">A reply containing any of these (case-insensitive) is badged <strong>Refused</strong>. Badging only &mdash; not a security control.</p>
+          <div class="cfg-fieldhead">
+            <label for="cfg-tools">Tool definitions (JSON array of OpenAI function tools)</label>
+            <button class="btn ghost sm copy-cfg" data-target="cfg-tools" type="button">Copy</button>
+          </div>
+          <textarea id="cfg-tools" rows="10" spellcheck="false"></textarea>
+          <p class="help">Dummy tools advertised to the model &mdash; edited as JSON (invalid JSON blocks the save). <strong>No real side effects.</strong> Copy &rarr; Lakera Red <em>Tool Definitions</em>.</p>
         </div>
         <div>
-          <label for="cfg-tools">Tools (JSON array of OpenAI function tools)</label>
-          <textarea id="cfg-tools" rows="10" spellcheck="false"></textarea>
-          <p class="help">Dummy tools advertised to the model &mdash; edited as JSON (invalid JSON blocks the save). They have <strong>no real side effects</strong>; the agent runs canned results in a bounded loop.</p>
+          <div class="cfg-fieldhead">
+            <label for="cfg-refusals">Refusal phrases (one per line)</label>
+            <button class="btn ghost sm copy-cfg" data-target="cfg-refusals" type="button">Copy</button>
+          </div>
+          <textarea id="cfg-refusals" rows="6" spellcheck="false"></textarea>
+          <p class="help">A reply containing any of these (case-insensitive) is badged <strong>Refused</strong> (dashboard badging only). Copy &rarr; Lakera Red <em>Custom Refusal Phrases</em>.</p>
         </div>
         <div class="actions">
           <button class="btn" id="cfg-save" type="button">Save configuration</button>
@@ -382,6 +394,19 @@
     saveConfig({ system_prompt: cfgDefaults.system_prompt, decoy_code: cfgDefaults.decoy_code,
                  refusal_hints: cfgDefaults.refusal_hints, tools: cfgDefaults.tools }, "Reset to defaults.");
   });
+  // Copy a config field to the clipboard (for pasting into Lakera Red).
+  var copyBtns = document.querySelectorAll(".copy-cfg");
+  for (var cb = 0; cb < copyBtns.length; cb++) {
+    copyBtns[cb].addEventListener("click", function () {
+      var t = byId(this.getAttribute("data-target"));
+      if (!t) return;
+      var text = t.value;
+      function done() { setCfgToast("Copied to clipboard."); }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(function () { t.select(); document.execCommand("copy"); done(); });
+      } else { t.select(); document.execCommand("copy"); done(); }
+    });
+  }
 
   // ---- stats + connection ----
   function setStats(s) {
@@ -477,17 +502,6 @@
     var reply = el("div", "reply-content");
     renderReply(reply, d.response || "", d.status);
     body.appendChild(reply);
-
-    var raw = el("button", "rawtoggle", "Show raw JSON");
-    raw.type = "button"; raw.setAttribute("aria-expanded", "false");
-    var pre = el("pre", "raw mono", JSON.stringify({
-      conversation_id: d.conversation_id, conversation_seq: d.conversation_seq, round: d.round,
-      id: d.id, ts: d.ts, model: d.model, status: d.status,
-      messages: d.messages, tool_calls: d.tool_calls || [], response: d.response
-    }, null, 2));
-    pre.hidden = true;
-    body.appendChild(raw);
-    body.appendChild(pre);
     return body;
   }
 
@@ -508,10 +522,22 @@
     head.appendChild(tag);
     var roundsEl = el("div", "conv-rounds");
     roundsEl.hidden = true;
+    var roundsList = el("div", "rounds-list");
+    // Conversation-level raw JSON: the whole conversation (all rounds) at once.
+    var rawWrap = el("div", "conv-raw");
+    var rawBtn = el("button", "rawtoggle", "Show raw JSON");
+    rawBtn.type = "button"; rawBtn.setAttribute("aria-expanded", "false");
+    var rawPre = el("pre", "raw mono", "");
+    rawPre.hidden = true;
+    rawWrap.appendChild(rawBtn);
+    rawWrap.appendChild(rawPre);
+    roundsEl.appendChild(roundsList);
+    roundsEl.appendChild(rawWrap);
     wrap.appendChild(head);
     wrap.appendChild(roundsEl);
     feed.insertBefore(wrap, feed.firstChild);
-    return { el: wrap, pill: pill, time: time, tag: tag, roundsEl: roundsEl,
+    return { el: wrap, pill: pill, time: time, tag: tag,
+             roundsEl: roundsEl, roundsList: roundsList, rawPre: rawPre, events: [],
              roundTitles: [], count: 0, worst: null, firstTs: d.ts, lastTs: d.ts, lastLen: 0 };
   }
 
@@ -531,7 +557,8 @@
     body.hidden = true;
     roundEl.appendChild(head);
     roundEl.appendChild(body);
-    conv.roundsEl.appendChild(roundEl);
+    conv.roundsList.appendChild(roundEl);
+    conv.events.push(d);
 
     conv.roundTitles.push(title);
     conv.count += 1;
@@ -553,6 +580,8 @@
     conv.el.dataset.status = worst;
     conv.tag.className = "tag " + worst;
     conv.tag.textContent = tagText(worst);
+    // Keep the conversation-level raw JSON (all rounds) current.
+    conv.rawPre.textContent = JSON.stringify(conv.events, null, 2);
   }
 
   function recomputeFilterCounts() {
