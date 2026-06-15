@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Secrets / local config (only .env.example belongs in the repo)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Tooling / build artifacts
+.pytest_cache/
+.playwright-mcp/
+.DS_Store

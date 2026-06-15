@@ -34,20 +34,45 @@ The `model` field in the request is ignored; the backing model is `AGENT_MODEL`.
 
 Keeping them separate means the token-management UI is never an open endpoint.
 The bearer token lives in memory only — nothing sensitive is written to disk.
-The only real credential (the OpenAI key) is read from the environment.
+The only real credential (the LLM API key) is read from the environment.
 
 ## Environment variables
 
 | Var | Required | Notes |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | yes | OpenAI key, read from env only |
+| `OPENAI_API_KEY` | yes¹ | LLM API key, read from env only |
+| `OPENROUTER_API_KEY` | yes¹ | alternative to `OPENAI_API_KEY`; set one |
+| `OPENAI_BASE_URL` | no | LLM endpoint; unset = OpenAI default. Set to `https://openrouter.ai/api/v1` for OpenRouter (alias: `OPENROUTER_BASE_URL`) |
+| `OPENROUTER_HTTP_REFERER` | no | optional OpenRouter ranking header; sent only if set |
+| `OPENROUTER_X_TITLE` | no | optional OpenRouter ranking header; sent only if set |
 | `AGENT_ADMIN_PASSWORD` | recommended | dashboard login; auto-generated + printed to logs if unset |
 | `AGENT_AUTH_TOKEN` | recommended | target bearer token; set it so it survives restarts/redeploys |
-| `AGENT_MODEL` | no | default `gpt-4o-mini` |
+| `AGENT_MODEL` | no | default `gpt-4o-mini`. For OpenRouter use a namespaced id, e.g. `openai/gpt-4o-mini` |
 | `AGENT_COOKIE_SECURE` | prod | set `true` when served over HTTPS |
 | `DEMO_DECOY_CODE` | no | fake decoy string the scan tries to extract |
 | `AGENT_ALLOW_NO_AUTH` | no | local-only escape hatch; disables target auth |
 | `PORT` | no | listen port (default 8000) |
+
+¹ Exactly one of `OPENAI_API_KEY` / `OPENROUTER_API_KEY` is required.
+
+### Using OpenRouter (or any OpenAI-compatible endpoint)
+
+The agent talks to the model through the OpenAI SDK, but the endpoint isn't
+hardwired to OpenAI — any OpenAI-compatible gateway works by setting a base URL
+and key. For [OpenRouter](https://openrouter.ai):
+
+```bash
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_API_KEY=sk-or-...           # or put it in OPENAI_API_KEY
+AGENT_MODEL=openai/gpt-4o-mini         # OpenRouter ids are namespaced
+# Optional ranking headers:
+# OPENROUTER_HTTP_REFERER=https://your-site.example
+# OPENROUTER_X_TITLE=Meridian Pay demo
+```
+
+No other endpoint behaves differently — same `/v1/chat/completions` contract,
+same dashboard. The startup banner prints the resolved provider and endpoint so
+you can confirm which backend you're driving.
 
 ---
 
@@ -62,7 +87,8 @@ needed** — point Lakera Red straight at the Coolify URL.
    branch. Coolify auto-detects the **Dockerfile** build pack.
 3. **Ports:** set **Ports Exposes** to `8000`.
 4. **Environment Variables** (Coolify → your app → Environment Variables) — add
-   the values from the table above. At minimum `OPENAI_API_KEY`; also set
+   the values from the table above. At minimum an LLM key (`OPENAI_API_KEY`, or
+   `OPENROUTER_API_KEY` + `OPENAI_BASE_URL` for OpenRouter); also set
    `AGENT_ADMIN_PASSWORD`, `AGENT_AUTH_TOKEN`, and `AGENT_COOKIE_SECURE=true`.
    Setting the token + password explicitly means they stay stable across every
    redeploy (and the admin password won't be printed to deploy logs).
@@ -86,7 +112,7 @@ and grab the bearer token from the panel.
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env          # then edit .env (at minimum, OPENAI_API_KEY)
+cp .env.example .env          # then edit .env (at minimum, an LLM API key)
 export $(grep -v '^#' .env | xargs)
 python agent.py               # serves on http://127.0.0.1:8000
 ```
@@ -114,17 +140,23 @@ It should appear as a card in the dashboard immediately.
 
 ## The dashboard
 
-- **Live traffic** — every incoming request renders as a transcript card: the
-  turns Red sent plus the agent's reply, tagged **Answered / Refused / Decoy
-  leaked**. When the planted decoy code shows up in a reply, the card turns
-  orange and highlights the leaked substring. Opening the dashboard mid-scan
-  replays recent history.
+- **Live traffic** — incoming requests are grouped into **conversations** and
+  shown as a collapsible tree, **collapsed by default** so a long scan stays
+  scannable. Each conversation is one row summarising its rounds (round count,
+  time span, and a **worst-case** status badge — **Answered / Refused / Decoy
+  leaked**). Expand it to see each round; expand a round to see the turns Red
+  sent plus the agent's reply. When the planted decoy code shows up in a reply,
+  that round/conversation turns orange and the leaked substring is highlighted.
+  Because the target is **stateless** (the contract carries no session id),
+  multi-round attacks are grouped by inferring that each round's message history
+  extends the previous one's. Opening the dashboard mid-scan replays history and
+  rebuilds the same tree.
 - **Token panel** — view, **Copy**, or **Regenerate** the bearer token.
   Regenerating invalidates the old value immediately, so update it in Lakera Red
   afterwards. (For Coolify, prefer setting `AGENT_AUTH_TOKEN` so it persists
   across redeploys.)
-- **Stats** — running totals for requests, refusals, and decoy leaks, plus a
-  live-connection indicator.
+- **Stats** — running totals for requests, conversations, refusals, and decoy
+  leaks, plus a live-connection indicator.
 
 Red-team payloads are rendered as text (never as HTML), so hostile message
 content can't execute in the dashboard.

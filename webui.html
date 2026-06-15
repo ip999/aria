@@ -62,23 +62,43 @@
   .empty { background:var(--surface); border:1px dashed var(--line); padding:36px;
            text-align:center; color:var(--muted); font-size:14px; }
 
-  .ix { background:var(--surface); border:1px solid var(--line); border-left:4px solid #bdb4b9;
-        margin-bottom:12px; }
-  .ix.answered { border-left-color:var(--berry); }
-  .ix.refused  { border-left-color:var(--grey); }
-  .ix.leaked   { border-left-color:var(--orange); }
-  .ix .top { display:flex; align-items:center; gap:12px; padding:11px 16px;
-             border-bottom:1px solid var(--line); }
-  .ix .time { font-size:12px; color:var(--muted); }
-  .ix .top .spacer { flex:1; }
   .tag { font-size:11px; text-transform:uppercase; letter-spacing:.6px; font-weight:bold;
-         padding:3px 9px; color:#fff; }
+         padding:3px 9px; color:#fff; white-space:nowrap; }
   .tag.answered { background:var(--berry); }
   .tag.refused  { background:var(--grey); }
   .tag.leaked   { background:var(--orange); }
-  .ix .body { padding:14px 16px; }
+
+  /* ---- conversation tree (two levels: conversation > round) ---- */
+  .conv { background:var(--surface); border:1px solid var(--line); border-left:4px solid #bdb4b9;
+          margin-bottom:10px; }
+  .conv.answered { border-left-color:var(--berry); }
+  .conv.refused  { border-left-color:var(--grey); }
+  .conv.leaked   { border-left-color:var(--orange); }
+
+  .conv-head, .round-head {
+    display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+    background:none; border:0; font:inherit; color:inherit; cursor:pointer; padding:11px 16px; }
+  .conv-head:hover, .round-head:hover { background:#faf9fa; }
+  .caret { flex:0 0 12px; color:var(--muted); font-size:11px; transition:transform .12s ease; }
+  [aria-expanded="true"] > .caret { transform:rotate(90deg); }
+  .conv-title { font-weight:bold; }
+  .conv-meta { color:var(--muted); font-size:12.5px; }
+  .conv-head .spacer { flex:1; }
+  .conv-time { font-size:12px; color:var(--muted); }
+  .round-title { font-weight:bold; font-size:13px; flex:0 0 auto; }
+  .round-preview { flex:1; min-width:0; color:var(--muted); font-size:12.5px;
+                   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .conv-rounds { border-top:1px solid var(--line); padding:4px 10px 10px; }
+  .round { border:1px solid var(--line); border-left:3px solid #bdb4b9; background:#fff; margin-top:8px; }
+  .round.answered { border-left-color:var(--berry); }
+  .round.refused  { border-left-color:var(--grey); }
+  .round.leaked   { border-left-color:var(--orange); }
+  .round-head { padding:9px 12px; }
+  .round-body { padding:0 12px 12px; }
+
   .seclabel { font-size:11px; text-transform:uppercase; letter-spacing:.7px; color:var(--muted);
-              margin:0 0 8px; }
+              margin:10px 0 8px; }
   .seclabel.reply { margin-top:16px; }
   .turn { display:flex; gap:10px; margin-bottom:8px; }
   .role { flex:0 0 76px; font-size:10px; text-transform:uppercase; letter-spacing:.6px;
@@ -90,13 +110,14 @@
              background:#faf9fa; border:1px solid var(--line); padding:9px 11px; }
   .reply-content { white-space:pre-wrap; word-break:break-word; font-size:14px;
                    border:1px solid var(--line); padding:11px 12px; }
-  .ix.leaked .reply-content { border-color:var(--orange); background:#fff4f2; }
+  .round.leaked .reply-content { border-color:var(--orange); background:#fff4f2; }
   mark { background:#ffd9d2; color:var(--orange); font-weight:bold; padding:0 2px; }
 
   @media (max-width:640px) {
     .stats { flex-wrap:wrap; }
     .stat { flex:1 1 45%; }
     .role { flex-basis:60px; }
+    .conv-time { display:none; }
   }
 </style>
 </head>
@@ -111,6 +132,7 @@
   <div class="wrap">
     <div class="stats">
       <div class="stat"><div class="n" id="s-total">0</div><div class="k">Total requests</div></div>
+      <div class="stat"><div class="n" id="s-convs">0</div><div class="k">Conversations</div></div>
       <div class="stat"><div class="n" id="s-refused">0</div><div class="k">Refused</div></div>
       <div class="stat leaked"><div class="n" id="s-leaked">0</div><div class="k">Decoy leaked</div></div>
       <div class="stat down" id="conn"><div class="n"><span class="dot"></span><span id="conn-label">Connecting</span></div><div class="k">Live feed</div></div>
@@ -139,8 +161,11 @@
 <script>
 (function () {
   "use strict";
-  var MAX_CARDS = 100;
-  var seen = 0;
+  var MAX_CONVS = 500;   // cap on conversation groups kept in the DOM
+  var seen = 0;          // rounds (requests) rendered
+  var convs = {};        // conversation_id -> view state
+  var RANK = { refused: 1, answered: 2, leaked: 3 };
+  var TAG_TEXT = { leaked: "Decoy leaked", refused: "Refused", answered: "Answered" };
 
   // ---- helpers (textContent everywhere: red-team payloads are untrusted) ----
   function el(tag, cls, text) {
@@ -193,6 +218,7 @@
   // ---- stats + connection ----
   function setStats(s) {
     document.getElementById("s-total").textContent = s.total || 0;
+    document.getElementById("s-convs").textContent = s.conversations || 0;
     document.getElementById("s-refused").textContent = s.refused || 0;
     document.getElementById("s-leaked").textContent = s.leaked || 0;
   }
@@ -208,37 +234,123 @@
   var feed = document.getElementById("feed");
   var emptyEl = document.getElementById("empty");
 
-  function renderInteraction(d) {
-    if (emptyEl && emptyEl.parentNode) emptyEl.parentNode.removeChild(emptyEl);
+  function statusOf(d) { return d.status || "answered"; }
+  function tagText(status) { return TAG_TEXT[status] || "Answered"; }
 
-    var card = el("div", "ix " + (d.status || "answered"));
+  // A round's "new" turn is its last user message -- use it as the collapsed preview.
+  function previewText(d) {
+    var msgs = d.messages || [], t = "";
+    for (var i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === "user") { t = msgs[i].content; break; }
+    }
+    if (!t && msgs.length) t = msgs[msgs.length - 1].content;
+    t = (t || "").replace(/\s+/g, " ").trim();
+    if (t.length > 100) t = t.slice(0, 100) + "…";
+    return t ? "“" + t + "”" : "(no message)";
+  }
 
-    var top = el("div", "top");
-    top.appendChild(el("span", "time mono", fmtTime(d.ts)));
-    top.appendChild(el("span", "spacer"));
-    top.appendChild(el("span", "time", d.model || ""));
-    top.appendChild(el("span", "tag " + (d.status || "answered"),
-      d.status === "leaked" ? "Decoy leaked" : (d.status === "refused" ? "Refused" : "Answered")));
-    card.appendChild(top);
+  function collapsibleBtn(cls) {
+    var b = document.createElement("button");
+    b.className = cls; b.type = "button"; b.setAttribute("aria-expanded", "false");
+    return b;
+  }
 
-    var body = el("div", "body");
-    body.appendChild(el("p", "seclabel", "Sent by Red (" + (d.messages ? d.messages.length : 0) + " turn" + ((d.messages && d.messages.length === 1) ? "" : "s") + ")"));
+  function buildRoundBody(d) {
+    var body = el("div", "round-body");
+    var n = d.messages ? d.messages.length : 0;
+    body.appendChild(el("p", "seclabel", "Sent by Red (" + n + " turn" + (n === 1 ? "" : "s") + ")"));
     (d.messages || []).forEach(function (m) {
       var turn = el("div", "turn");
       turn.appendChild(el("div", "role " + m.role, m.role));
       turn.appendChild(el("div", "content mono", m.content));
       body.appendChild(turn);
     });
-
     body.appendChild(el("p", "seclabel reply", "Agent reply"));
     var reply = el("div", "reply-content");
     renderReply(reply, d.response || "", d.status);
     body.appendChild(reply);
+    return body;
+  }
 
-    card.appendChild(body);
-    feed.insertBefore(card, feed.firstChild);
+  // Build a new (collapsed) conversation group and insert it at the top of the feed.
+  function createConv(id, d) {
+    var wrap = el("div", "conv answered");
+    wrap.dataset.cid = id;
+    var head = collapsibleBtn("conv-head");
+    head.appendChild(el("span", "caret", "▸"));
+    head.appendChild(el("span", "conv-title", "Conversation #" + (d.conversation_seq || "?")));
+    var meta = el("span", "conv-meta", "");
+    var time = el("span", "conv-time mono", "");
+    var tag = el("span", "tag answered", "Answered");
+    head.appendChild(meta);
+    head.appendChild(el("span", "spacer"));
+    head.appendChild(time);
+    head.appendChild(tag);
+    var roundsEl = el("div", "conv-rounds");
+    roundsEl.hidden = true;
+    wrap.appendChild(head);
+    wrap.appendChild(roundsEl);
+    feed.insertBefore(wrap, feed.firstChild);
+    return { el: wrap, meta: meta, time: time, tag: tag, roundsEl: roundsEl,
+             roundTitles: [], count: 0, worst: null, firstTs: d.ts, lastTs: d.ts };
+  }
 
-    while (feed.children.length > MAX_CARDS) feed.removeChild(feed.lastChild);
+  // Append one round (collapsed) to a conversation group.
+  function addRound(conv, d) {
+    var status = statusOf(d);
+    var roundEl = el("div", "round " + status);
+    var head = collapsibleBtn("round-head");
+    head.appendChild(el("span", "caret", "▸"));
+    var title = el("span", "round-title", "Round " + d.round);
+    head.appendChild(title);
+    head.appendChild(el("span", "round-preview", previewText(d)));
+    head.appendChild(el("span", "tag " + status, tagText(status)));
+    var body = buildRoundBody(d);
+    body.hidden = true;
+    roundEl.appendChild(head);
+    roundEl.appendChild(body);
+    conv.roundsEl.appendChild(roundEl);
+
+    conv.roundTitles.push(title);
+    conv.count += 1;
+    conv.lastTs = d.ts;
+    if (conv.worst === null || RANK[status] > RANK[conv.worst]) conv.worst = status;
+  }
+
+  // Refresh the conversation header: round count, "Round k/N" labels, time span,
+  // and the worst-case status badge/border across all its rounds.
+  function updateConvSummary(conv) {
+    var total = conv.count;
+    conv.meta.textContent = total + " round" + (total === 1 ? "" : "s");
+    for (var i = 0; i < conv.roundTitles.length; i++) {
+      conv.roundTitles[i].textContent = "Round " + (i + 1) + "/" + total;
+    }
+    var t = fmtTime(conv.firstTs);
+    if (conv.lastTs && conv.lastTs !== conv.firstTs) t += "–" + fmtTime(conv.lastTs);
+    conv.time.textContent = t;
+    var worst = conv.worst || "answered";
+    conv.el.className = "conv " + worst;
+    conv.tag.className = "tag " + worst;
+    conv.tag.textContent = tagText(worst);
+  }
+
+  function handleInteraction(d) {
+    if (emptyEl && emptyEl.parentNode) emptyEl.parentNode.removeChild(emptyEl);
+    var id = d.conversation_id || ("solo-" + (d.id || (seen + 1)));
+    var conv = convs[id];
+    if (!conv) conv = convs[id] = createConv(id, d);
+    addRound(conv, d);
+    updateConvSummary(conv);
+    seen += 1;
+
+    // Prune oldest conversation groups beyond the cap (skip whitespace nodes).
+    while (feed.children.length > MAX_CONVS) {
+      var last = feed.lastElementChild;
+      if (!last) break;
+      if (last.dataset && last.dataset.cid) delete convs[last.dataset.cid];
+      feed.removeChild(last);
+    }
+    updateCounts();
   }
 
   // Highlight the decoy substring in a leaked reply, without using innerHTML.
@@ -253,10 +365,24 @@
     container.appendChild(document.createTextNode(text.slice(idx + window.__DECOY.length)));
   }
 
-  function bumpCount() {
-    seen += 1;
-    document.getElementById("feedcount").textContent = seen + " shown";
+  function updateCounts() {
+    var nConv = 0;
+    for (var k in convs) if (convs.hasOwnProperty(k)) nConv += 1;
+    document.getElementById("feedcount").textContent =
+      seen + " request" + (seen === 1 ? "" : "s") + " in " +
+      nConv + " conversation" + (nConv === 1 ? "" : "s");
   }
+
+  // One delegated handler toggles any conversation or round header (collapsed
+  // by default). The collapsible panel is always the header's next sibling.
+  feed.addEventListener("click", function (e) {
+    var head = e.target.closest ? e.target.closest(".conv-head, .round-head") : null;
+    if (!head || !feed.contains(head)) return;
+    var expanded = head.getAttribute("aria-expanded") === "true";
+    head.setAttribute("aria-expanded", expanded ? "false" : "true");
+    var panel = head.nextElementSibling;
+    if (panel) panel.hidden = expanded;
+  });
 
   // ---- SSE ----
   function connect() {
@@ -264,8 +390,7 @@
     es.addEventListener("open", function () { setConn("live"); });
     es.addEventListener("stats", function (e) { setStats(JSON.parse(e.data)); });
     es.addEventListener("interaction", function (e) {
-      renderInteraction(JSON.parse(e.data));
-      bumpCount();
+      handleInteraction(JSON.parse(e.data));
     });
     es.addEventListener("error", function () {
       setConn("down");
