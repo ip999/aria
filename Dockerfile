@@ -19,9 +19,11 @@ USER appuser
 
 EXPOSE 8000
 
-# Liveness probe (no curl in slim images, so use Python). Internal port is 8000.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python -c "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8000/health'); sys.exit(0)" || exit 1
+# Liveness probe (no curl in slim images, so use Python). Reads $PORT so it
+# always matches the port uvicorn binds below — including a PORT that the
+# platform (e.g. Coolify) injects at runtime.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8000')+'/health')" || exit 1
 
 # Single worker on purpose: the live feed, history, and in-memory bearer token
 # are per-process state. Do not scale workers or replicas above 1.
