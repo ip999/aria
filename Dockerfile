@@ -2,9 +2,7 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PORT=8000 \
-    AGENT_HOST=0.0.0.0
+    PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
@@ -17,6 +15,9 @@ COPY agent.py webui.html ./
 RUN useradd -u 10001 -m appuser
 USER appuser
 
+# Documentation only: EXPOSE neither binds nor restricts the port. The actual
+# listen port is $PORT (default 8000, set by the run command and healthcheck
+# below). For routing, set Coolify's "Ports Exposes" to the same port.
 EXPOSE 8000
 
 # Liveness probe (no curl in slim images, so use Python). Reads $PORT so it
