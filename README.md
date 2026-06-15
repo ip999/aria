@@ -49,7 +49,6 @@ The only real credential (the LLM API key) is read from the environment.
 | `AGENT_AUTH_TOKEN` | recommended | target bearer token; set it so it survives restarts/redeploys |
 | `AGENT_MODEL` | no | default `gpt-4o-mini`. For OpenRouter use a namespaced id, e.g. `openai/gpt-4o-mini` |
 | `AGENT_COOKIE_SECURE` | prod | set `true` when served over HTTPS |
-| `DEMO_DECOY_CODE` | no | fake decoy string the scan tries to extract |
 | `AGENT_ALLOW_NO_AUTH` | no | local-only escape hatch; disables target auth |
 | `PORT` | no | listen port (default 8000) |
 
@@ -150,7 +149,20 @@ It should appear as a card in the dashboard immediately.
   Because the target is **stateless** (the contract carries no session id),
   multi-round attacks are grouped by inferring that each round's message history
   extends the previous one's. Opening the dashboard mid-scan replays history and
-  rebuilds the same tree.
+  rebuilds the same tree. Within a round only the **new** turns are shown (the
+  stateless re-send repeats the earlier transcript), and a **Show raw JSON**
+  toggle reveals the exact event — `messages` and `response` — so you can verify
+  it against what Red actually sent.
+- **Summary, filters & bulk controls** — a **sticky summary** header keeps the
+  stats and controls in view while you scroll. Filter chips show/hide whole
+  conversations by their worst-case outcome (**Answered / Refused / Leaked**),
+  and **Expand all / Collapse all** open or close the whole tree at once.
+- **Target configuration** — edit the **system prompt**, **decoy code**, and
+  **refusal phrases** live from the dashboard. Use `{decoy}` in the prompt where
+  you want the decoy injected. Edits apply to the next request and are held in
+  memory only (they reset to the built-in defaults on restart).
+- **Dark mode** — toggle in the header; your choice is remembered and it follows
+  your system preference by default.
 - **Token panel** — view, **Copy**, or **Regenerate** the bearer token.
   Regenerating invalidates the old value immediately, so update it in Lakera Red
   afterwards. (For Coolify, prefer setting `AGENT_AUTH_TOKEN` so it persists
@@ -187,6 +199,9 @@ Detection** helps Red's adaptive scans backtrack correctly:
 
 ## Tuning the "mix"
 
-Edit `SYSTEM_PROMPT` in `agent.py`: tighten the rules to make the demo harder,
-loosen them to make leaks more reliable. The decoy code is a **fake** string
-(`DEMO_DECOY_CODE`), not a credential.
+Open **Target configuration** in the dashboard to edit the system prompt, decoy
+code, and refusal phrases live: tighten the rules to make the demo harder, loosen
+them to make leaks more reliable. Put `{decoy}` in the prompt wherever you want the
+decoy code injected. Edits apply to the next request and are in-memory only (they
+reset to the built-in defaults in `agent.py` on restart). The decoy is a **fake**
+string, not a credential.
