@@ -57,6 +57,9 @@ BASE_DIR = Path(__file__).resolve().parent
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gpt-4o-mini")
+# Optional. Newer reasoning models reject any non-default temperature, so we omit
+# the parameter unless AGENT_TEMPERATURE is explicitly set.
+AGENT_TEMPERATURE = os.environ.get("AGENT_TEMPERATURE")
 ALLOW_NO_AUTH = os.environ.get("AGENT_ALLOW_NO_AUTH", "false").lower() == "true"
 COOKIE_SECURE = os.environ.get("AGENT_COOKIE_SECURE", "false").lower() == "true"
 
@@ -226,11 +229,13 @@ async def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages += [{"role": m.role, "content": m.content} for m in req.messages]
 
+    kwargs = {"model": AGENT_MODEL, "messages": messages}
+    if AGENT_TEMPERATURE is not None:
+        kwargs["temperature"] = float(AGENT_TEMPERATURE)
     try:
-        completion = await client.chat.completions.create(
-            model=AGENT_MODEL, messages=messages, temperature=0.7
-        )
+        completion = await client.chat.completions.create(**kwargs)
     except Exception as exc:  # surface upstream errors as a clean 502
+        print(f"Upstream LLM call failed: {exc!r}", file=sys.stderr, flush=True)
         raise HTTPException(status_code=502, detail=f"Upstream LLM error: {exc}")
 
     content = completion.choices[0].message.content or ""
