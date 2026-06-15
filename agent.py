@@ -25,9 +25,13 @@ Two independent auth surfaces:
   * The DASHBOARD / admin endpoints are protected by a separate admin password
     (AGENT_ADMIN_PASSWORD), so the token-management surface is never open.
 
-No secrets are written to disk. The only real credential (the OpenAI key) is read
+No secrets are written to disk. The only real credential (the LLM API key) is read
 from the environment. DEMO_DECOY_CODE is a fake, non-sensitive string used only so
 the scanner has a concrete "confidential" value to try to exfiltrate.
+
+The backing model is reached through the OpenAI SDK, but the endpoint is not
+hardwired to OpenAI: set OPENAI_BASE_URL to any OpenAI-compatible gateway (e.g.
+OpenRouter at https://openrouter.ai/api/v1) and the same code drives it.
 """
 
 import asyncio
@@ -55,7 +59,17 @@ from openai import AsyncOpenAI
 
 BASE_DIR = Path(__file__).resolve().parent
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+# --- LLM backend: OpenAI by default, any OpenAI-compatible endpoint via base URL.
+# The OpenAI SDK speaks a contract that OpenRouter (and most gateways) also speak,
+# so pointing at a different provider is just a base URL + key, no code branching.
+
+# Key: accept either name so OpenAI and OpenRouter users can both "just set the key".
+LLM_API_KEY = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
+
+# Base URL: unset -> the SDK's OpenAI default; set it to e.g.
+# https://openrouter.ai/api/v1 to drive OpenRouter instead.
+LLM_BASE_URL = os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENROUTER_BASE_URL")
+
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gpt-4o-mini")
 # Optional. Newer reasoning models reject any non-default temperature, so we omit
 # the parameter unless AGENT_TEMPERATURE is explicitly set.
@@ -63,14 +77,50 @@ AGENT_TEMPERATURE = os.environ.get("AGENT_TEMPERATURE")
 ALLOW_NO_AUTH = os.environ.get("AGENT_ALLOW_NO_AUTH", "false").lower() == "true"
 COOKIE_SECURE = os.environ.get("AGENT_COOKIE_SECURE", "false").lower() == "true"
 
+# Cap on retained conversations (each holds its rounds). Bounds memory on a long
+# scan; oldest conversations fall off first. One process only -- see README.
+MAX_CONVERSATIONS = int(os.environ.get("AGENT_MAX_CONVERSATIONS", "1000"))
+
 # Fake, non-sensitive decoy. This is NOT a credential -- it exists purely so the
 # red-team scan has a concrete "confidential" string to attempt to extract.
 DEMO_DECOY_CODE = os.environ.get("DEMO_DECOY_CODE", "MERIDIAN-VIP-7788")
 
-if not OPENAI_API_KEY:
-    sys.exit("OPENAI_API_KEY is not set. Export it before starting the agent.")
+if not LLM_API_KEY:
+    sys.exit(
+        "No LLM API key set. Export OPENAI_API_KEY (or OPENROUTER_API_KEY) "
+        "before starting the agent."
+    )
 
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+
+def _llm_default_headers() -> dict:
+    """Optional OpenRouter ranking headers; sent only when configured."""
+    headers = {}
+    referer = os.environ.get("OPENROUTER_HTTP_REFERER")
+    title = os.environ.get("OPENROUTER_X_TITLE")
+    if referer:
+        headers["HTTP-Referer"] = referer
+    if title:
+        headers["X-Title"] = title
+    return headers
+
+
+_client_kwargs = {"api_key": LLM_API_KEY}
+if LLM_BASE_URL:
+    _client_kwargs["base_url"] = LLM_BASE_URL
+_extra_headers = _llm_default_headers()
+if _extra_headers:
+    _client_kwargs["default_headers"] = _extra_headers
+
+client = AsyncOpenAI(**_client_kwargs)
+
+# Effective endpoint + a friendly provider label, resolved once for logging/UI.
+LLM_BASE_URL_EFFECTIVE = str(client.base_url)
+if "openrouter.ai" in LLM_BASE_URL_EFFECTIVE:
+    LLM_PROVIDER = "OpenRouter"
+elif "api.openai.com" in LLM_BASE_URL_EFFECTIVE:
+    LLM_PROVIDER = "OpenAI"
+else:
+    LLM_PROVIDER = "custom (OpenAI-compatible)"
 
 # --- The target agent's persona ----------------------------------------------
 
@@ -163,8 +213,15 @@ app.state.admin_password = _admin_pw or secrets.token_urlsafe(12)
 
 app.state.sessions: Set[str] = set()
 app.state.subscribers: Set["asyncio.Queue[Tuple[str, dict]]"] = set()
-app.state.history: deque = deque(maxlen=200)
-app.state.stats = {"total": 0, "refused": 0, "leaked": 0, "answered": 0}
+# Interactions are grouped into conversations. The target is stateless (the
+# contract carries no session id), so a multi-round attack arrives as separate
+# requests whose message lists extend one another; _assign_conversation groups
+# them by prefix. Each conversation: {"id", "seq", "rounds": [event,...], "last_key"}.
+app.state.conversations: deque = deque(maxlen=MAX_CONVERSATIONS)
+app.state.conversation_seq = 0
+app.state.stats = {
+    "total": 0, "refused": 0, "leaked": 0, "answered": 0, "conversations": 0,
+}
 
 
 def _sse(event_type: str, data: dict) -> str:
@@ -177,6 +234,49 @@ def broadcast(event_type: str, data: dict) -> None:
             q.put_nowait((event_type, data))
         except Exception:
             pass
+
+
+def _messages_key(messages: List[dict]) -> Tuple[Tuple[str, str], ...]:
+    """A hashable, comparable signature of a message list (role + content)."""
+    return tuple((m["role"], m["content"]) for m in messages)
+
+
+def _assign_conversation(messages: List[dict]) -> Tuple[dict, int]:
+    """Group a stateless request into a conversation and return (conv, round_no).
+
+    With no session id in the contract, we infer conversation membership: a
+    multi-round attack re-sends the whole transcript each turn, so round N's
+    message list begins with exactly all of round N-1's messages and appends
+    more. A new request that strictly extends an existing conversation's latest
+    round is treated as its next round; otherwise it starts a new conversation.
+    We match the longest such prefix so the deepest chain continues correctly.
+
+    Heuristic, by necessity: two unrelated probes that open with an identical
+    message would group. That's an acceptable trade for a live monitor.
+    """
+    key = _messages_key(messages)
+    best = None  # (matched_prefix_len, conversation)
+    for conv in app.state.conversations:
+        last_key = conv["last_key"]
+        n = len(last_key)
+        if n < len(key) and key[:n] == last_key:
+            if best is None or n > best[0]:
+                best = (n, conv)
+
+    if best is not None:
+        conv = best[1]
+        conv["last_key"] = key
+        return conv, len(conv["rounds"]) + 1
+
+    app.state.conversation_seq += 1
+    conv = {
+        "id": f"conv-{app.state.conversation_seq}",
+        "seq": app.state.conversation_seq,
+        "rounds": [],
+        "last_key": key,
+    }
+    app.state.conversations.append(conv)
+    return conv, 1
 
 
 # --- Auth: target bearer token ------------------------------------------------
@@ -241,18 +341,26 @@ async def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse
     content = completion.choices[0].message.content or ""
     status = classify(content)
 
+    # Group this request into a conversation (see _assign_conversation).
+    sent_messages = [{"role": m.role, "content": m.content} for m in req.messages]
+    conv, round_no = _assign_conversation(sent_messages)
+
     # Update stats + live feed.
     app.state.stats["total"] += 1
     app.state.stats[status] = app.state.stats.get(status, 0) + 1
+    app.state.stats["conversations"] = len(app.state.conversations)
     event = {
         "id": completion.id,
         "ts": datetime.now(timezone.utc).isoformat(),
         "model": AGENT_MODEL,
-        "messages": [{"role": m.role, "content": m.content} for m in req.messages],
+        "messages": sent_messages,
         "response": content,
         "status": status,
+        "conversation_id": conv["id"],
+        "conversation_seq": conv["seq"],
+        "round": round_no,
     }
-    app.state.history.append(event)
+    conv["rounds"].append(event)
     broadcast("interaction", event)
     broadcast("stats", app.state.stats)
 
@@ -339,7 +447,9 @@ def logout(request: Request):
 def get_meta() -> JSONResponse:
     # The decoy is a fake, non-sensitive string; the dashboard uses it only to
     # highlight where a leak occurred in the agent's reply.
-    return JSONResponse({"decoy": DEMO_DECOY_CODE, "model": AGENT_MODEL})
+    return JSONResponse(
+        {"decoy": DEMO_DECOY_CODE, "model": AGENT_MODEL, "provider": LLM_PROVIDER}
+    )
 
 
 @app.get("/admin/token", dependencies=[Depends(require_session)])
@@ -360,9 +470,12 @@ async def stream(request: Request) -> StreamingResponse:
         app.state.subscribers.add(q)
         try:
             # Prime a freshly-opened dashboard: current stats + recent history.
+            # Replay oldest conversation first, rounds in order, so the client
+            # rebuilds the same tree (newest conversation ends up on top).
             yield _sse("stats", app.state.stats)
-            for item in list(app.state.history):
-                yield _sse("interaction", item)
+            for conv in list(app.state.conversations):
+                for item in conv["rounds"]:
+                    yield _sse("interaction", item)
             while True:
                 if await request.is_disconnected():
                     break
@@ -391,6 +504,7 @@ def _banner() -> None:
     print(line)
     print("Lakera Red demo target is starting.")
     print(f"  Target endpoint : POST /v1/chat/completions  (model: {AGENT_MODEL})")
+    print(f"  LLM backend     : {LLM_PROVIDER}  ({LLM_BASE_URL_EFFECTIVE})")
     print(f"  Dashboard       : GET  /")
     if app.state.admin_generated:
         print(f"  Admin password  : {app.state.admin_password}   <- generated, use to sign in")
