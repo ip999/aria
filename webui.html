@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Check Point &middot; Red Team Monitor</title>
+<style>
+  :root {
+    --berry:#ee0c5d; --berry-click:#e40c5b; --grey:#41273c; --clay:#f2f2f2;
+    --surface:#ffffff; --line:#e3dfe1; --muted:#7a6c74;
+    --orange:#ff3312; --purple:#741984;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--clay); color:var(--grey);
+         font-family:Arial, sans-serif; line-height:1.45; }
+  .mono { font-family:Consolas, "SFMono-Regular", Menlo, monospace; }
+
+  /* ---- header ---- */
+  header { background:var(--berry); color:#fff; display:flex; align-items:baseline;
+           gap:14px; padding:14px 24px; }
+  header .wordmark { font-weight:bold; letter-spacing:.3px; }
+  header .title { font-size:13px; text-transform:uppercase; letter-spacing:1.2px; opacity:.9; }
+  header .spacer { flex:1; }
+  header a { color:#fff; font-size:12px; text-decoration:none; opacity:.85;
+             border:1px solid rgba(255,255,255,.5); padding:5px 10px; }
+  header a:hover { opacity:1; }
+
+  .wrap { max-width:1100px; margin:0 auto; padding:24px; }
+
+  /* ---- stats ---- */
+  .stats { display:flex; gap:1px; background:var(--line); border:1px solid var(--line);
+           margin-bottom:18px; }
+  .stat { background:var(--surface); flex:1; padding:14px 18px; }
+  .stat .n { font-size:30px; font-weight:bold; }
+  .stat .k { font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted);
+             margin-top:2px; }
+  .stat.leaked .n { color:var(--orange); }
+  .stat .dot { display:inline-block; width:9px; height:9px; background:#bdb4b9; margin-right:7px;
+               vertical-align:middle; }
+  .stat.live .dot { background:#16a34a; }
+  .stat.down .dot { background:var(--orange); }
+
+  /* ---- token panel ---- */
+  .panel { background:var(--surface); border:1px solid var(--line); padding:18px;
+           margin-bottom:22px; }
+  .panel h2 { margin:0 0 4px; font-size:13px; text-transform:uppercase; letter-spacing:.8px; }
+  .panel .sub { font-size:12px; color:var(--muted); margin:0 0 12px; }
+  .tokenrow { display:flex; gap:0; }
+  .tokenrow input { flex:1; border:1px solid var(--line); border-right:0; padding:11px 12px;
+                    font-size:14px; background:#faf9fa; color:var(--grey); min-width:0; }
+  .btn { border:1px solid var(--berry); background:var(--berry); color:#fff; font-size:13px;
+         font-weight:bold; padding:0 16px; cursor:pointer; white-space:nowrap; }
+  .btn:hover { background:var(--berry-click); }
+  .btn.ghost { background:#fff; color:var(--berry); }
+  .btn.ghost:hover { background:#fff; color:var(--berry-click); border-color:var(--berry-click); }
+  .toast { font-size:12px; color:var(--muted); margin-top:10px; min-height:16px; }
+
+  /* ---- feed ---- */
+  .feedhead { display:flex; align-items:baseline; gap:10px; margin-bottom:10px; }
+  .feedhead h2 { margin:0; font-size:13px; text-transform:uppercase; letter-spacing:.8px; }
+  .feedhead .count { font-size:12px; color:var(--muted); }
+  .empty { background:var(--surface); border:1px dashed var(--line); padding:36px;
+           text-align:center; color:var(--muted); font-size:14px; }
+
+  .ix { background:var(--surface); border:1px solid var(--line); border-left:4px solid #bdb4b9;
+        margin-bottom:12px; }
+  .ix.answered { border-left-color:var(--berry); }
+  .ix.refused  { border-left-color:var(--grey); }
+  .ix.leaked   { border-left-color:var(--orange); }
+  .ix .top { display:flex; align-items:center; gap:12px; padding:11px 16px;
+             border-bottom:1px solid var(--line); }
+  .ix .time { font-size:12px; color:var(--muted); }
+  .ix .top .spacer { flex:1; }
+  .tag { font-size:11px; text-transform:uppercase; letter-spacing:.6px; font-weight:bold;
+         padding:3px 9px; color:#fff; }
+  .tag.answered { background:var(--berry); }
+  .tag.refused  { background:var(--grey); }
+  .tag.leaked   { background:var(--orange); }
+  .ix .body { padding:14px 16px; }
+  .seclabel { font-size:11px; text-transform:uppercase; letter-spacing:.7px; color:var(--muted);
+              margin:0 0 8px; }
+  .seclabel.reply { margin-top:16px; }
+  .turn { display:flex; gap:10px; margin-bottom:8px; }
+  .role { flex:0 0 76px; font-size:10px; text-transform:uppercase; letter-spacing:.6px;
+          font-weight:bold; padding-top:2px; }
+  .role.system { color:var(--purple); }
+  .role.user { color:var(--grey); }
+  .role.assistant { color:var(--berry); }
+  .content { flex:1; white-space:pre-wrap; word-break:break-word; font-size:13.5px;
+             background:#faf9fa; border:1px solid var(--line); padding:9px 11px; }
+  .reply-content { white-space:pre-wrap; word-break:break-word; font-size:14px;
+                   border:1px solid var(--line); padding:11px 12px; }
+  .ix.leaked .reply-content { border-color:var(--orange); background:#fff4f2; }
+  mark { background:#ffd9d2; color:var(--orange); font-weight:bold; padding:0 2px; }
+
+  @media (max-width:640px) {
+    .stats { flex-wrap:wrap; }
+    .stat { flex:1 1 45%; }
+    .role { flex-basis:60px; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <span class="wordmark">Check Point</span>
+    <span class="title">Red Team Monitor</span>
+    <span class="spacer"></span>
+    <a href="#" id="logout">Sign out</a>
+  </header>
+
+  <div class="wrap">
+    <div class="stats">
+      <div class="stat"><div class="n" id="s-total">0</div><div class="k">Total requests</div></div>
+      <div class="stat"><div class="n" id="s-refused">0</div><div class="k">Refused</div></div>
+      <div class="stat leaked"><div class="n" id="s-leaked">0</div><div class="k">Decoy leaked</div></div>
+      <div class="stat down" id="conn"><div class="n"><span class="dot"></span><span id="conn-label">Connecting</span></div><div class="k">Live feed</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Target bearer token</h2>
+      <p class="sub">Paste this as the <strong>Bearer Token</strong> when you configure the target in Lakera Red. Regenerating invalidates the old value &mdash; update it in Red afterwards.</p>
+      <div class="tokenrow">
+        <input id="token" class="mono" readonly value="loading&hellip;">
+        <button class="btn ghost" id="copy">Copy</button>
+        <button class="btn" id="regen">Regenerate</button>
+      </div>
+      <div class="toast" id="toast"></div>
+    </div>
+
+    <div class="feedhead">
+      <h2>Live traffic</h2>
+      <span class="count" id="feedcount"></span>
+    </div>
+    <div id="feed">
+      <div class="empty" id="empty">Waiting for traffic &mdash; point a Lakera Red scan at this target and tests will appear here as they run.</div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+  var MAX_CARDS = 100;
+  var seen = 0;
+
+  // ---- helpers (textContent everywhere: red-team payloads are untrusted) ----
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function fmtTime(iso) {
+    try { return new Date(iso).toLocaleTimeString(); } catch (e) { return iso; }
+  }
+
+  // ---- token panel ----
+  var tokenInput = document.getElementById("token");
+  var toast = document.getElementById("toast");
+  function setToast(msg) {
+    toast.textContent = msg;
+    if (msg) setTimeout(function () { if (toast.textContent === msg) toast.textContent = ""; }, 4000);
+  }
+  function loadToken() {
+    fetch("/admin/token", { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { tokenInput.value = d.token; })
+      .catch(function () { tokenInput.value = "(failed to load)"; });
+  }
+  document.getElementById("copy").addEventListener("click", function () {
+    var v = tokenInput.value;
+    function done() { setToast("Copied to clipboard."); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(v).then(done).catch(function () {
+        tokenInput.select(); document.execCommand("copy"); done();
+      });
+    } else {
+      tokenInput.select(); document.execCommand("copy"); done();
+    }
+  });
+  document.getElementById("regen").addEventListener("click", function () {
+    if (!confirm("Generate a new bearer token? The current one stops working immediately and you'll need to update it in Lakera Red.")) return;
+    fetch("/admin/token/regenerate", { method: "POST", credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { tokenInput.value = d.token; setToast("New token generated \u2014 update it in Lakera Red."); })
+      .catch(function () { setToast("Regeneration failed."); });
+  });
+  document.getElementById("logout").addEventListener("click", function (e) {
+    e.preventDefault();
+    var f = document.createElement("form");
+    f.method = "post"; f.action = "/logout"; document.body.appendChild(f); f.submit();
+  });
+
+  // ---- stats + connection ----
+  function setStats(s) {
+    document.getElementById("s-total").textContent = s.total || 0;
+    document.getElementById("s-refused").textContent = s.refused || 0;
+    document.getElementById("s-leaked").textContent = s.leaked || 0;
+  }
+  function setConn(state) {
+    var c = document.getElementById("conn");
+    var label = document.getElementById("conn-label");
+    c.classList.remove("live", "down");
+    if (state === "live") { c.classList.add("live"); label.textContent = "Live"; }
+    else { c.classList.add("down"); label.textContent = "Reconnecting"; }
+  }
+
+  // ---- feed rendering ----
+  var feed = document.getElementById("feed");
+  var emptyEl = document.getElementById("empty");
+
+  function renderInteraction(d) {
+    if (emptyEl && emptyEl.parentNode) emptyEl.parentNode.removeChild(emptyEl);
+
+    var card = el("div", "ix " + (d.status || "answered"));
+
+    var top = el("div", "top");
+    top.appendChild(el("span", "time mono", fmtTime(d.ts)));
+    top.appendChild(el("span", "spacer"));
+    top.appendChild(el("span", "time", d.model || ""));
+    top.appendChild(el("span", "tag " + (d.status || "answered"),
+      d.status === "leaked" ? "Decoy leaked" : (d.status === "refused" ? "Refused" : "Answered")));
+    card.appendChild(top);
+
+    var body = el("div", "body");
+    body.appendChild(el("p", "seclabel", "Sent by Red (" + (d.messages ? d.messages.length : 0) + " turn" + ((d.messages && d.messages.length === 1) ? "" : "s") + ")"));
+    (d.messages || []).forEach(function (m) {
+      var turn = el("div", "turn");
+      turn.appendChild(el("div", "role " + m.role, m.role));
+      turn.appendChild(el("div", "content mono", m.content));
+      body.appendChild(turn);
+    });
+
+    body.appendChild(el("p", "seclabel reply", "Agent reply"));
+    var reply = el("div", "reply-content");
+    renderReply(reply, d.response || "", d.status);
+    body.appendChild(reply);
+
+    card.appendChild(body);
+    feed.insertBefore(card, feed.firstChild);
+
+    while (feed.children.length > MAX_CARDS) feed.removeChild(feed.lastChild);
+  }
+
+  // Highlight the decoy substring in a leaked reply, without using innerHTML.
+  function renderReply(container, text, status) {
+    if (status !== "leaked" || !window.__DECOY) { container.textContent = text; return; }
+    var idx = text.toLowerCase().indexOf(window.__DECOY.toLowerCase());
+    if (idx < 0) { container.textContent = text; return; }
+    container.appendChild(document.createTextNode(text.slice(0, idx)));
+    var m = document.createElement("mark");
+    m.textContent = text.slice(idx, idx + window.__DECOY.length);
+    container.appendChild(m);
+    container.appendChild(document.createTextNode(text.slice(idx + window.__DECOY.length)));
+  }
+
+  function bumpCount() {
+    seen += 1;
+    document.getElementById("feedcount").textContent = seen + " shown";
+  }
+
+  // ---- SSE ----
+  function connect() {
+    var es = new EventSource("/admin/stream", { withCredentials: true });
+    es.addEventListener("open", function () { setConn("live"); });
+    es.addEventListener("stats", function (e) { setStats(JSON.parse(e.data)); });
+    es.addEventListener("interaction", function (e) {
+      renderInteraction(JSON.parse(e.data));
+      bumpCount();
+    });
+    es.addEventListener("error", function () {
+      setConn("down");
+      // EventSource auto-reconnects; nothing else to do.
+    });
+  }
+
+  function loadMeta() {
+    fetch("/admin/meta", { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { window.__DECOY = d.decoy || ""; })
+      .catch(function () { window.__DECOY = ""; });
+  }
+
+  loadToken();
+  loadMeta();
+  connect();
+})();
+</script>
+</body>
+</html>

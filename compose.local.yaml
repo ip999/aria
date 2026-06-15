@@ -1,0 +1,14 @@
+# Local development only.
+#
+# This file is intentionally named compose.local.yaml so Coolify does NOT
+# auto-detect it. Deploy to Coolify with the Dockerfile build pack instead.
+#
+# Run locally with:  docker compose -f compose.local.yaml up --build
+services:
+  agent:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
