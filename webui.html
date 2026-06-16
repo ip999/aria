@@ -75,14 +75,15 @@
   textarea::-webkit-scrollbar-corner, pre.raw::-webkit-scrollbar-corner { background:transparent; }
 
   /* persona picker cards (auto-fills the grid as personas are added) */
-  .persona-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(232px, 1fr)); gap:10px; margin-top:4px; }
+  .persona-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 300px));
+        justify-content:center; gap:12px; margin-top:4px; }
   .persona-card { display:flex; gap:12px; align-items:flex-start; text-align:left; width:100%;
         background:var(--surface); border:1px solid var(--line); padding:14px; cursor:pointer;
         color:var(--text); font:inherit; transition:border-color .12s ease, box-shadow .12s ease; }
   .persona-card:hover { border-color:var(--muted); }
   .persona-card.is-active { border-color:var(--berry); box-shadow:inset 0 0 0 1px var(--berry); background:var(--surface-2); }
   .pc-icon { flex:0 0 auto; color:var(--muted); margin-top:1px; }
-  .pc-icon svg { width:32px; height:32px; display:block; }
+  .pc-icon svg { width:42px; height:42px; display:block; }
   .persona-card:hover .pc-icon, .persona-card.is-active .pc-icon { color:var(--berry); }
   .pc-body { display:flex; flex-direction:column; gap:3px; min-width:0; }
   .pc-name { font-weight:bold; font-size:13.5px; }
