@@ -16,4 +16,5 @@ env/
 # Tooling / build artifacts
 .pytest_cache/
 .playwright-mcp/
+aria-*.png
 .DS_Store
