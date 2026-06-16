@@ -101,6 +101,7 @@
   .chip[data-cat=answered] .cdot { background:var(--berry); }
   .chip[data-cat=refused]  .cdot { background:var(--muted); }
   .chip[data-cat=leaked]   .cdot { background:var(--orange); }
+  .chip[data-cat=tools]    .cdot { background:var(--purple); }
   .chip em { font-style:normal; color:var(--muted); }
   .chip[aria-pressed=false] { opacity:.45; text-decoration:line-through; }
   .toolbar .spacer { flex:1; }
@@ -126,7 +127,8 @@
 
   #feed.hide-answered .conv[data-status=answered],
   #feed.hide-refused  .conv[data-status=refused],
-  #feed.hide-leaked   .conv[data-status=leaked] { display:none; }
+  #feed.hide-leaked   .conv[data-status=leaked],
+  #feed.hide-tools    .conv[data-has-tools=yes] { display:none; }
 
   .conv-head, .round-head { display:flex; align-items:center; gap:10px; width:100%; text-align:left;
       background:none; border:0; font:inherit; color:inherit; cursor:pointer; padding:11px 14px; }
@@ -259,6 +261,7 @@
         <div class="stat"><div class="n" id="s-convs">0</div><div class="k">Conversations</div></div>
         <div class="stat"><div class="n" id="s-refused">0</div><div class="k">Refused</div></div>
         <div class="stat leaked"><div class="n" id="s-leaked">0</div><div class="k">Decoy leaked</div></div>
+        <div class="stat"><div class="n" id="s-tools">0</div><div class="k">Tool calls</div></div>
         <div class="stat down" id="conn"><div class="n"><span class="dot"></span><span id="conn-label">Connecting</span></div><div class="k">Live feed</div></div>
       </div>
       <div class="toolbar">
@@ -266,6 +269,7 @@
         <button class="chip" data-cat="answered" aria-pressed="true" type="button"><span class="cdot"></span>Answered <em id="f-answered">0</em></button>
         <button class="chip" data-cat="refused" aria-pressed="true" type="button"><span class="cdot"></span>Refused <em id="f-refused">0</em></button>
         <button class="chip" data-cat="leaked" aria-pressed="true" type="button"><span class="cdot"></span>Leaked <em id="f-leaked">0</em></button>
+        <button class="chip" data-cat="tools" aria-pressed="true" type="button"><span class="cdot"></span>Tools <em id="f-tools">0</em></button>
         <span class="spacer"></span>
         <button class="btn ghost sm" id="expandAll" type="button">Expand all</button>
         <button class="btn ghost sm" id="collapseAll" type="button">Collapse all</button>
@@ -417,6 +421,7 @@
     byId("s-convs").textContent = s.conversations || 0;
     byId("s-refused").textContent = s.refused || 0;
     byId("s-leaked").textContent = s.leaked || 0;
+    byId("s-tools").textContent = s.tool_calls || 0;
   }
   function setConn(state) {
     var c = byId("conn"), label = byId("conn-label");
@@ -522,12 +527,16 @@
     head.appendChild(el("span", "caret", "▸"));
     head.appendChild(el("span", "conv-num", "#" + (d.conversation_seq || "?")));
     head.appendChild(el("span", "conv-preview", previewText(d.messages, true)));
+    var toolPill = el("span", "toolpill", "");
+    toolPill.hidden = true;
     var pill = el("span", "pill", "1 round");
     var time = el("span", "conv-time mono", "");
     var tag = el("span", "tag answered", "Answered");
+    head.appendChild(toolPill);
     head.appendChild(pill);
     head.appendChild(time);
     head.appendChild(tag);
+    wrap.dataset.hasTools = "no";
     var roundsEl = el("div", "conv-rounds");
     roundsEl.hidden = true;
     var roundsList = el("div", "rounds-list");
@@ -544,9 +553,10 @@
     wrap.appendChild(head);
     wrap.appendChild(roundsEl);
     feed.insertBefore(wrap, feed.firstChild);
-    return { el: wrap, pill: pill, time: time, tag: tag,
+    return { el: wrap, pill: pill, time: time, tag: tag, toolPill: toolPill,
              roundsEl: roundsEl, roundsList: roundsList, rawPre: rawPre, events: [],
-             roundTitles: [], count: 0, worst: null, firstTs: d.ts, lastTs: d.ts, lastLen: 0 };
+             roundTitles: [], count: 0, worst: null, firstTs: d.ts, lastTs: d.ts,
+             lastLen: 0, toolCount: 0 };
   }
 
   function addRound(conv, d) {
@@ -572,6 +582,7 @@
     conv.count += 1;
     conv.lastTs = d.ts;
     conv.lastLen = (d.messages || []).length;
+    conv.toolCount += (d.tool_calls || []).length;
     if (conv.worst === null || RANK[status] > RANK[conv.worst]) conv.worst = status;
   }
 
@@ -588,18 +599,30 @@
     conv.el.dataset.status = worst;
     conv.tag.className = "tag " + worst;
     conv.tag.textContent = tagText(worst);
+    // Surface tool use at the conversation level (pill + filterable attribute).
+    if (conv.toolCount > 0) {
+      conv.toolPill.hidden = false;
+      conv.toolPill.textContent = "⚙ " + conv.toolCount;
+      conv.toolPill.title = conv.toolCount + " tool call" + (conv.toolCount === 1 ? "" : "s") + " in this conversation";
+      conv.el.dataset.hasTools = "yes";
+    } else {
+      conv.toolPill.hidden = true;
+      conv.el.dataset.hasTools = "no";
+    }
     // Keep the conversation-level raw JSON (all rounds) current.
     conv.rawPre.textContent = JSON.stringify(conv.events, null, 2);
   }
 
   function recomputeFilterCounts() {
-    var c = { answered: 0, refused: 0, leaked: 0 };
+    var c = { answered: 0, refused: 0, leaked: 0, tools: 0 };
     for (var k in convs) if (convs.hasOwnProperty(k)) {
       var w = convs[k].worst || "answered"; c[w] = (c[w] || 0) + 1;
+      if (convs[k].toolCount > 0) c.tools += 1;
     }
     byId("f-answered").textContent = c.answered;
     byId("f-refused").textContent = c.refused;
     byId("f-leaked").textContent = c.leaked;
+    byId("f-tools").textContent = c.tools;
   }
 
   function updateCounts() {

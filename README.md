@@ -76,7 +76,7 @@ you can confirm which backend you're driving.
 
 ---
 
-## Deploy to Coolify (GitHub auto-deploy)
+## Deploy to Coolify
 
 Coolify gives the app a real domain with automatic HTTPS, so **no tunnel is
 needed** — point Lakera Red straight at the Coolify URL.
@@ -95,8 +95,20 @@ needed** — point Lakera Red straight at the Coolify URL.
 5. **Domain:** assign a domain; Coolify provisions a Let's Encrypt certificate.
 6. **Health check:** the Dockerfile already defines one on `/health`; no extra
    config needed.
-7. **Deploy.** Coolify wires up a GitHub webhook, so future pushes to the branch
-   auto-deploy.
+7. **Deploy.** Click **Deploy** to build and start the app. Confirm the app's
+   configured **Branch** is `main` (or whichever you deploy from).
+
+> **Auto-deploy on push is not automatic for public-URL deployments.** Coolify
+> only creates the GitHub webhook for you when the repo is connected through its
+> **GitHub App** integration (Sources → GitHub). If you added the repo by its
+> **public URL**, pushes/merges will **not** trigger a build until you either:
+>
+> - connect the repo via the **GitHub App**, or
+> - add Coolify's webhook to GitHub manually — copy the **Webhook URL** (+ secret)
+>   from the app's deployment settings, then in the repo go to **Settings →
+>   Webhooks → Add webhook**, content type `application/json`, event `push`.
+>
+> Otherwise just hit **Deploy** / **Redeploy** in Coolify after each merge.
 
 > **Keep it to a single instance.** The live feed, history, and in-memory token
 > are per-process state, so the image runs one worker — do **not** raise worker

@@ -359,6 +359,7 @@ app.state.conversations: deque = deque(maxlen=MAX_CONVERSATIONS)
 app.state.conversation_seq = 0
 app.state.stats = {
     "total": 0, "refused": 0, "leaked": 0, "answered": 0, "conversations": 0,
+    "tool_calls": 0,
 }
 
 # Live-editable target persona (in-memory only; resets to defaults on restart).
@@ -533,6 +534,7 @@ async def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse
     app.state.stats["total"] += 1
     app.state.stats[status] = app.state.stats.get(status, 0) + 1
     app.state.stats["conversations"] = len(app.state.conversations)
+    app.state.stats["tool_calls"] = app.state.stats.get("tool_calls", 0) + len(tool_calls_made)
     event = {
         "id": completion_id,
         "ts": datetime.now(timezone.utc).isoformat(),
