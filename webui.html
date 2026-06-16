@@ -20,12 +20,14 @@
     --bg:#f2f2f2; --surface:#ffffff; --surface-2:#faf9fa; --text:#41273c;
     --muted:#7a6c74; --line:#e3dfe1; --header-bg:#ee0c5d; --header-fg:#ffffff;
     --mark-bg:#ffd9d2; --leak-bg:#fff4f2; --input-bg:#faf9fa; --shadow:rgba(40,20,35,.16);
+    --scroll-thumb:#cfc7cc;
   }
   :root[data-theme="dark"] {
     --berry:#ff2d77; --berry-click:#ff4486; --orange:#ff6a4d; --purple:#cf8fda;
     --bg:#141017; --surface:#1f1825; --surface-2:#2a2230; --text:#ece7ea;
     --muted:#a99fb0; --line:#392f44; --header-bg:#b00a47; --header-fg:#ffffff;
     --mark-bg:#5e2b22; --leak-bg:#3a1f1c; --input-bg:#2a2230; --shadow:rgba(0,0,0,.6);
+    --scroll-thumb:#5a4d68;
   }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
@@ -62,8 +64,42 @@
   .cfg-fieldhead label { margin:0; }
   .cfg textarea, .cfg input[type=text] { width:100%; border:1px solid var(--line); background:var(--input-bg);
         color:var(--text); padding:10px 12px; font-size:13px; font-family:Consolas, monospace; }
-  .cfg select { width:100%; border:1px solid var(--line); background:var(--input-bg); color:var(--text);
-        padding:10px 12px; font-size:14px; font-family:inherit; font-weight:bold; }
+  /* nicer scrollbars in the editable text areas + raw JSON */
+  textarea, pre.raw { scrollbar-width:thin; scrollbar-color:var(--scroll-thumb) transparent; }
+  textarea::-webkit-scrollbar, pre.raw::-webkit-scrollbar { width:11px; height:11px; }
+  textarea::-webkit-scrollbar-track, pre.raw::-webkit-scrollbar-track { background:transparent; }
+  textarea::-webkit-scrollbar-thumb, pre.raw::-webkit-scrollbar-thumb {
+        background:var(--scroll-thumb); border:3px solid transparent; border-radius:8px; background-clip:padding-box; }
+  textarea::-webkit-scrollbar-thumb:hover, pre.raw::-webkit-scrollbar-thumb:hover {
+        background:var(--muted); border:3px solid transparent; background-clip:padding-box; }
+  textarea::-webkit-scrollbar-corner, pre.raw::-webkit-scrollbar-corner { background:transparent; }
+
+  /* persona picker cards (auto-fills the grid as personas are added) */
+  .persona-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(232px, 1fr)); gap:10px; margin-top:4px; }
+  .persona-card { display:flex; gap:12px; align-items:flex-start; text-align:left; width:100%;
+        background:var(--surface); border:1px solid var(--line); padding:14px; cursor:pointer;
+        color:var(--text); font:inherit; transition:border-color .12s ease, box-shadow .12s ease; }
+  .persona-card:hover { border-color:var(--muted); }
+  .persona-card.is-active { border-color:var(--berry); box-shadow:inset 0 0 0 1px var(--berry); background:var(--surface-2); }
+  .pc-icon { flex:0 0 auto; color:var(--muted); margin-top:1px; }
+  .pc-icon svg { width:32px; height:32px; display:block; }
+  .persona-card:hover .pc-icon, .persona-card.is-active .pc-icon { color:var(--berry); }
+  .pc-body { display:flex; flex-direction:column; gap:3px; min-width:0; }
+  .pc-name { font-weight:bold; font-size:13.5px; }
+  .pc-desc { font-size:12px; color:var(--muted); line-height:1.45; }
+  .pc-secret { font-size:11px; color:var(--muted); margin-top:3px; }
+  .pc-secret b { color:var(--text); }
+
+  /* modal (custom confirm dialog) */
+  .modal-overlay { position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center;
+        padding:20px; background:rgba(10,6,12,.55); }
+  .modal-overlay[hidden] { display:none; }
+  .modal { background:var(--surface); border:1px solid var(--line); width:460px; max-width:100%;
+        box-shadow:0 24px 60px -24px var(--shadow); }
+  .modal-title { margin:0; padding:14px 18px; background:var(--berry); color:#fff; font-size:13px;
+        text-transform:uppercase; letter-spacing:.7px; }
+  .modal-body { margin:0; padding:18px; font-size:14px; line-height:1.55; color:var(--text); }
+  .modal-actions { display:flex; justify-content:flex-end; gap:8px; padding:0 18px 18px; }
   .cfg textarea { resize:vertical; }
   .cfg .help { font-size:11px; color:var(--muted); margin:5px 0 0; }
   .cfg .help code { background:var(--surface-2); border:1px solid var(--line); padding:0 4px; }
@@ -208,9 +244,8 @@
       <p class="sub" style="margin-top:12px;">The current persona the target uses. Edit it live (changes apply to the next request, in memory only, reset on restart) &mdash; and <strong>Copy</strong> these values into Lakera Red&rsquo;s <em>Ground Truth</em> (System Prompt, Tool Definitions) and <em>Refusal Detection</em> fields to improve evaluation accuracy.</p>
       <div class="cfg cfg-grid">
         <div>
-          <label for="cfg-persona">Persona</label>
-          <select id="cfg-persona"></select>
-          <p class="help" id="persona-desc"></p>
+          <label>Persona</label>
+          <div class="persona-grid" id="persona-cards"></div>
         </div>
         <div>
           <div class="cfg-fieldhead">
@@ -292,6 +327,17 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h3 class="modal-title" id="modal-title">Switch persona?</h3>
+      <p class="modal-body" id="modal-body"></p>
+      <div class="modal-actions">
+        <button class="btn ghost" id="modal-cancel" type="button">Cancel</button>
+        <button class="btn" id="modal-confirm" type="button">Switch</button>
+      </div>
+    </div>
+  </div>
+
 <script>
 (function () {
   "use strict";
@@ -309,6 +355,37 @@
   }
   function byId(id) { return document.getElementById(id); }
   function fmtTime(iso) { try { return new Date(iso).toLocaleTimeString(); } catch (e) { return iso; } }
+
+  // ---- inline persona icons (keyed by persona.icon; shield = fallback) ----
+  var ICONS = {
+    bank: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-5 9 5"/><path d="M4 9h16"/><path d="M5 9v8M9 9v8M15 9v8M19 9v8"/><path d="M3 21h18"/></svg>',
+    airplane: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 3a1.5 1.5 0 0 1 3 0v6l8 4.5V16l-8-2.2V18l2.2 1.6V21L12 20l-3.7 .9v-1.4L10.5 18v-4.2L2.5 16v-2.5L10.5 9z"/></svg>',
+    health: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12h8"/></svg>',
+    shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 7.7-7 9-4-1.3-7-4.4-7-9V6z"/></svg>'
+  };
+
+  // ---- custom confirm modal (replaces window.confirm) ----
+  var modalOverlay = byId("modal"), modalTitle = byId("modal-title"),
+      modalBody = byId("modal-body"), modalConfirm = byId("modal-confirm"), modalCancel = byId("modal-cancel");
+  function openConfirm(opts) {
+    modalTitle.textContent = opts.title || "Are you sure?";
+    modalBody.textContent = opts.body || "";
+    modalConfirm.textContent = opts.confirmLabel || "Confirm";
+    modalOverlay.hidden = false;
+    modalConfirm.focus();
+    function cleanup() {
+      modalOverlay.hidden = true;
+      modalConfirm.onclick = modalCancel.onclick = modalOverlay.onclick = null;
+      document.removeEventListener("keydown", onKey);
+    }
+    function ok() { cleanup(); if (opts.onConfirm) opts.onConfirm(); }
+    function no() { cleanup(); if (opts.onCancel) opts.onCancel(); }
+    function onKey(e) { if (e.key === "Escape") no(); else if (e.key === "Enter") ok(); }
+    modalConfirm.onclick = ok;
+    modalCancel.onclick = no;
+    modalOverlay.onclick = function (e) { if (e.target === modalOverlay) no(); };
+    document.addEventListener("keydown", onKey);
+  }
 
   // ---- theme toggle ----
   var themeBtn = byId("theme");
@@ -363,7 +440,8 @@
   // ---- config panel ----
   var cfgPrompt = byId("cfg-prompt"), cfgDecoy = byId("cfg-decoy"),
       cfgRefusals = byId("cfg-refusals"), cfgTools = byId("cfg-tools");
-  var cfgPersona = byId("cfg-persona"), personaDesc = byId("persona-desc");
+  var personaCards = byId("persona-cards");
+  var personaSel = { current: null, meta: {} };
   var cfgToast = byId("cfg-toast");
   var cfgDefaults = null;
   function setCfgToast(msg) {
@@ -378,22 +456,34 @@
     window.__DECOY = d.decoy_code || "";
     if (d.defaults) cfgDefaults = d.defaults;
     if (d.personas) {
-      cfgPersona._meta = {};
-      cfgPersona.innerHTML = "";
+      personaSel.meta = {};
+      personaCards.innerHTML = "";
       d.personas.forEach(function (p) {
-        cfgPersona._meta[p.id] = p;
-        var o = document.createElement("option");
-        o.value = p.id; o.textContent = p.name;
-        cfgPersona.appendChild(o);
+        personaSel.meta[p.id] = p;
+        var card = document.createElement("button");
+        card.type = "button"; card.className = "persona-card"; card.dataset.id = p.id;
+        var ic = el("span", "pc-icon"); ic.innerHTML = ICONS[p.icon] || ICONS.shield;
+        var body = el("span", "pc-body");
+        body.appendChild(el("span", "pc-name", p.name));
+        body.appendChild(el("span", "pc-desc", p.description || ""));
+        if (p.decoy_label) {
+          var sec = el("span", "pc-secret");
+          sec.appendChild(document.createTextNode("Planted secret: "));
+          sec.appendChild(el("b", null, p.decoy_label));
+          body.appendChild(sec);
+        }
+        card.appendChild(ic); card.appendChild(body);
+        personaCards.appendChild(card);
       });
     }
     if (d.persona) {
-      cfgPersona.value = d.persona;
-      cfgPersona._current = d.persona;
-      var m = (cfgPersona._meta || {})[d.persona];
-      personaDesc.textContent = m
-        ? m.description + (m.decoy_label ? "  ·  Planted secret: " + m.decoy_label : "")
-        : "";
+      personaSel.current = d.persona;
+      var cards = personaCards.querySelectorAll(".persona-card");
+      for (var i = 0; i < cards.length; i++) {
+        var on = cards[i].dataset.id === d.persona;
+        cards[i].classList.toggle("is-active", on);
+        cards[i].setAttribute("aria-pressed", on ? "true" : "false");
+      }
     }
   }
   function loadConfig() {
@@ -428,21 +518,26 @@
                  refusal_hints: cfgDefaults.refusal_hints, tools: cfgDefaults.tools }, "Reset to defaults.");
   });
   // Switching persona resets the live config to that persona's defaults.
-  cfgPersona.addEventListener("change", function () {
-    var id = this.value;
-    if (id === cfgPersona._current) return;
-    var nm = (cfgPersona._meta[id] || {}).name || id;
-    if (!confirm("Switch to “" + nm + "”? This replaces the current system prompt, decoy, refusal phrases and tools with that persona's defaults.")) {
-      this.value = cfgPersona._current;
-      return;
-    }
-    fetch("/admin/persona", {
-      method: "POST", credentials: "same-origin",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ persona: id })
-    })
-      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function (d) { fillConfig(d); setCfgToast("Switched to " + nm + " — applies to the next request."); })
-      .catch(function () { setCfgToast("Persona switch failed."); cfgPersona.value = cfgPersona._current; });
+  personaCards.addEventListener("click", function (e) {
+    var card = e.target.closest ? e.target.closest(".persona-card") : null;
+    if (!card || !personaCards.contains(card)) return;
+    var id = card.dataset.id;
+    if (id === personaSel.current) return;
+    var nm = (personaSel.meta[id] || {}).name || id;
+    openConfirm({
+      title: "Switch persona?",
+      body: "Switch to “" + nm + "”? This replaces the current system prompt, decoy, refusal phrases and tools with that persona's defaults.",
+      confirmLabel: "Switch persona",
+      onConfirm: function () {
+        fetch("/admin/persona", {
+          method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ persona: id })
+        })
+          .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+          .then(function (d) { fillConfig(d); setCfgToast("Switched to " + nm + " — applies to the next request."); })
+          .catch(function () { setCfgToast("Persona switch failed."); });
+      }
+    });
   });
 
   // Copy a config field to the clipboard (for pasting into Lakera Red).
