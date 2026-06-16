@@ -140,9 +140,12 @@
   .chip[data-cat=answered] .cdot { background:var(--berry); }
   .chip[data-cat=refused]  .cdot { background:var(--muted); }
   .chip[data-cat=leaked]   .cdot { background:var(--orange); }
-  .chip[data-cat=tools]    .cdot { background:var(--purple); }
+  .chip-tools .cdot { background:var(--purple); }
   .chip em { font-style:normal; color:var(--muted); }
   .chip[aria-pressed=false] { opacity:.45; text-decoration:line-through; }
+  /* Tools is a tri-state facet (all / only / hide), not a simple on-off toggle. */
+  .chip-tools.mode-only { border-color:var(--purple); box-shadow:inset 0 0 0 1px var(--purple); }
+  .chip-tools.mode-hide { opacity:.45; text-decoration:line-through; }
   .toolbar .spacer { flex:1; }
 
   /* ---- feed ---- */
@@ -166,8 +169,9 @@
 
   #feed.hide-answered .conv[data-status=answered],
   #feed.hide-refused  .conv[data-status=refused],
-  #feed.hide-leaked   .conv[data-status=leaked],
-  #feed.hide-tools    .conv[data-has-tools=yes] { display:none; }
+  #feed.hide-leaked   .conv[data-status=leaked] { display:none; }
+  #feed.tools-hide .conv[data-has-tools=yes] { display:none; }
+  #feed.tools-only .conv:not([data-has-tools=yes]) { display:none; }
 
   .conv-head, .round-head { display:flex; align-items:center; gap:10px; width:100%; text-align:left;
       background:none; border:0; font:inherit; color:inherit; cursor:pointer; padding:11px 14px; }
@@ -312,7 +316,7 @@
         <button class="chip" data-cat="answered" aria-pressed="true" type="button"><span class="cdot"></span>Answered <em id="f-answered">0</em></button>
         <button class="chip" data-cat="refused" aria-pressed="true" type="button"><span class="cdot"></span>Refused <em id="f-refused">0</em></button>
         <button class="chip" data-cat="leaked" aria-pressed="true" type="button"><span class="cdot"></span>Leaked <em id="f-leaked">0</em></button>
-        <button class="chip" data-cat="tools" aria-pressed="true" type="button"><span class="cdot"></span>Tools <em id="f-tools">0</em></button>
+        <button class="chip chip-tools" id="chip-tools" data-mode="all" type="button" title="Click to cycle: all → only tool calls → hide tool calls"><span class="cdot"></span><span class="chip-label">Tools</span> <em id="f-tools">0</em></button>
         <span class="spacer"></span>
         <button class="btn ghost sm" id="expandAll" type="button">Expand all</button>
         <button class="btn ghost sm" id="collapseAll" type="button">Collapse all</button>
@@ -838,8 +842,9 @@
   byId("expandAll").addEventListener("click", function () { setAll(true); });
   byId("collapseAll").addEventListener("click", function () { setAll(false); });
 
-  // ---- category filters (by each conversation's worst-case status) ----
-  var chips = document.querySelectorAll(".chip");
+  // ---- status filters: show/hide each outcome (mutually exclusive, so toggling
+  //      the others off isolates one) ----
+  var chips = document.querySelectorAll(".chip[data-cat]");
   for (var ci = 0; ci < chips.length; ci++) {
     chips[ci].addEventListener("click", function () {
       var cat = this.getAttribute("data-cat");
@@ -848,6 +853,21 @@
       feed.classList.toggle("hide-" + cat, pressed);
     });
   }
+
+  // ---- tools filter: tri-state, because tool use is orthogonal to status
+  //      (all conversations / only those with tool calls / hide those with tool calls) ----
+  var chipTools = byId("chip-tools");
+  var TOOL_MODES = ["all", "only", "hide"];
+  var TOOL_LABELS = { all: "Tools", only: "Only tools", hide: "Hide tools" };
+  chipTools.addEventListener("click", function () {
+    var mode = TOOL_MODES[(TOOL_MODES.indexOf(this.dataset.mode || "all") + 1) % TOOL_MODES.length];
+    this.dataset.mode = mode;
+    this.querySelector(".chip-label").textContent = TOOL_LABELS[mode];
+    this.classList.toggle("mode-only", mode === "only");
+    this.classList.toggle("mode-hide", mode === "hide");
+    feed.classList.toggle("tools-only", mode === "only");
+    feed.classList.toggle("tools-hide", mode === "hide");
+  });
 
   // ---- SSE ----
   function connect() {
