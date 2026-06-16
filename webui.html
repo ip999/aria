@@ -150,7 +150,6 @@
   .round-body { padding:0 12px 12px; }
 
   .seclabel { font-size:11px; text-transform:uppercase; letter-spacing:.7px; color:var(--muted); margin:10px 0 8px; }
-  .seclabel.reply { margin-top:16px; }
   .carry { font-size:12px; color:var(--muted); font-style:italic; margin:10px 0 2px; }
   .turn { display:flex; gap:10px; margin-bottom:8px; }
   .role { flex:0 0 76px; font-size:10px; text-transform:uppercase; letter-spacing:.6px; font-weight:bold; padding-top:2px; }
@@ -159,8 +158,12 @@
   .role.assistant { color:var(--berry); }
   .content { flex:1; white-space:pre-wrap; word-break:break-word; font-size:13.5px;
              background:var(--surface-2); border:1px solid var(--line); padding:9px 11px; }
-  .reply-content { white-space:pre-wrap; word-break:break-word; font-size:14px; border:1px solid var(--line); padding:11px 12px; }
-  .round[data-status=leaked] .reply-content { border-color:var(--orange); background:var(--leak-bg); }
+  /* The agent reply is a normal turn, with a subtle accent marking it the latest. */
+  .reply-turn .content { border-left:3px solid var(--berry); background:var(--surface); }
+  .round[data-status=refused] .reply-turn .content { border-left-color:var(--muted); }
+  .round[data-status=leaked]  .reply-turn .content { border-left-color:var(--orange); background:var(--leak-bg); }
+  .latest-tag { display:block; margin-top:5px; font-size:9px; text-transform:uppercase;
+                letter-spacing:.5px; font-weight:bold; color:var(--berry); }
   mark { background:var(--mark-bg); color:var(--orange); font-weight:bold; padding:0 2px; }
 
   .toolpill { flex:0 0 auto; font-size:11px; color:var(--purple); border:1px solid var(--line);
@@ -498,10 +501,15 @@
       });
     }
 
-    body.appendChild(el("p", "seclabel reply", "Agent reply"));
-    var reply = el("div", "reply-content");
+    // Agent reply: same shape as the turns above, with a subtle "latest" accent.
+    var replyTurn = el("div", "turn reply-turn");
+    var role = el("div", "role assistant", "assistant");
+    role.appendChild(el("span", "latest-tag", "latest"));
+    replyTurn.appendChild(role);
+    var reply = el("div", "content mono");
     renderReply(reply, d.response || "", d.status);
-    body.appendChild(reply);
+    replyTurn.appendChild(reply);
+    body.appendChild(replyTurn);
     return body;
   }
 
