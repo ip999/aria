@@ -62,6 +62,8 @@
   .cfg-fieldhead label { margin:0; }
   .cfg textarea, .cfg input[type=text] { width:100%; border:1px solid var(--line); background:var(--input-bg);
         color:var(--text); padding:10px 12px; font-size:13px; font-family:Consolas, monospace; }
+  .cfg select { width:100%; border:1px solid var(--line); background:var(--input-bg); color:var(--text);
+        padding:10px 12px; font-size:14px; font-family:inherit; font-weight:bold; }
   .cfg textarea { resize:vertical; }
   .cfg .help { font-size:11px; color:var(--muted); margin:5px 0 0; }
   .cfg .help code { background:var(--surface-2); border:1px solid var(--line); padding:0 4px; }
@@ -205,6 +207,11 @@
       <summary><span class="chev">&#9654;</span> Target configuration</summary>
       <p class="sub" style="margin-top:12px;">The current persona the target uses. Edit it live (changes apply to the next request, in memory only, reset on restart) &mdash; and <strong>Copy</strong> these values into Lakera Red&rsquo;s <em>Ground Truth</em> (System Prompt, Tool Definitions) and <em>Refusal Detection</em> fields to improve evaluation accuracy.</p>
       <div class="cfg cfg-grid">
+        <div>
+          <label for="cfg-persona">Persona</label>
+          <select id="cfg-persona"></select>
+          <p class="help" id="persona-desc"></p>
+        </div>
         <div>
           <div class="cfg-fieldhead">
             <label for="cfg-prompt">System prompt</label>
@@ -356,6 +363,7 @@
   // ---- config panel ----
   var cfgPrompt = byId("cfg-prompt"), cfgDecoy = byId("cfg-decoy"),
       cfgRefusals = byId("cfg-refusals"), cfgTools = byId("cfg-tools");
+  var cfgPersona = byId("cfg-persona"), personaDesc = byId("persona-desc");
   var cfgToast = byId("cfg-toast");
   var cfgDefaults = null;
   function setCfgToast(msg) {
@@ -369,6 +377,24 @@
     cfgTools.value = JSON.stringify(d.tools || [], null, 2);
     window.__DECOY = d.decoy_code || "";
     if (d.defaults) cfgDefaults = d.defaults;
+    if (d.personas) {
+      cfgPersona._meta = {};
+      cfgPersona.innerHTML = "";
+      d.personas.forEach(function (p) {
+        cfgPersona._meta[p.id] = p;
+        var o = document.createElement("option");
+        o.value = p.id; o.textContent = p.name;
+        cfgPersona.appendChild(o);
+      });
+    }
+    if (d.persona) {
+      cfgPersona.value = d.persona;
+      cfgPersona._current = d.persona;
+      var m = (cfgPersona._meta || {})[d.persona];
+      personaDesc.textContent = m
+        ? m.description + (m.decoy_label ? "  ·  Planted secret: " + m.decoy_label : "")
+        : "";
+    }
   }
   function loadConfig() {
     fetch("/admin/config", { credentials: "same-origin" })
@@ -401,6 +427,24 @@
     saveConfig({ system_prompt: cfgDefaults.system_prompt, decoy_code: cfgDefaults.decoy_code,
                  refusal_hints: cfgDefaults.refusal_hints, tools: cfgDefaults.tools }, "Reset to defaults.");
   });
+  // Switching persona resets the live config to that persona's defaults.
+  cfgPersona.addEventListener("change", function () {
+    var id = this.value;
+    if (id === cfgPersona._current) return;
+    var nm = (cfgPersona._meta[id] || {}).name || id;
+    if (!confirm("Switch to “" + nm + "”? This replaces the current system prompt, decoy, refusal phrases and tools with that persona's defaults.")) {
+      this.value = cfgPersona._current;
+      return;
+    }
+    fetch("/admin/persona", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ persona: id })
+    })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) { fillConfig(d); setCfgToast("Switched to " + nm + " — applies to the next request."); })
+      .catch(function () { setCfgToast("Persona switch failed."); cfgPersona.value = cfgPersona._current; });
+  });
+
   // Copy a config field to the clipboard (for pasting into Lakera Red).
   var copyBtns = document.querySelectorAll(".copy-cfg");
   for (var cb = 0; cb < copyBtns.length; cb++) {
