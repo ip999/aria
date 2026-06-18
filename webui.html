@@ -109,6 +109,9 @@
   .tokenrow { display:flex; gap:0; }
   .tokenrow input { flex:1; border:1px solid var(--line); border-right:0; padding:11px 12px;
                     font-size:14px; background:var(--input-bg); color:var(--text); min-width:0; }
+  .panel > label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:.6px;
+                   color:var(--muted); margin:0 0 6px; }
+  .tokenrow + label { margin-top:14px; }
   .btn { border:1px solid var(--berry); background:var(--berry); color:#fff; font-size:13px;
          font-weight:bold; padding:10px 16px; cursor:pointer; white-space:nowrap; font-family:inherit; }
   .btn:hover { background:var(--berry-click); }
@@ -289,10 +292,16 @@
       </div>
     </details>
 
-    <!-- Target bearer token -->
+    <!-- Lakera Red target connection -->
     <div class="panel">
-      <h2>Target bearer token</h2>
-      <p class="sub">Paste this as the <strong>Bearer Token</strong> when you configure the target in Lakera Red. Regenerating invalidates the old value &mdash; update it in Red afterwards.</p>
+      <h2>Lakera Red target</h2>
+      <p class="sub">Paste these into Lakera Red when you create the target (<strong>Agent</strong> &middot; <strong>Stateless</strong>). Regenerating the token invalidates the old value &mdash; update it in Red afterwards.</p>
+      <label for="endpoint">API endpoint</label>
+      <div class="tokenrow">
+        <input id="endpoint" class="mono" readonly value="loading&hellip;">
+        <button class="btn ghost" id="copy-endpoint">Copy</button>
+      </div>
+      <label for="token">Bearer token</label>
       <div class="tokenrow">
         <input id="token" class="mono" readonly value="loading&hellip;">
         <button class="btn ghost" id="copy">Copy</button>
@@ -407,13 +416,24 @@
     themeLabel();
   });
 
-  // ---- token panel ----
+  // ---- Lakera Red target panel (endpoint + token) ----
   var tokenInput = byId("token");
+  var endpointInput = byId("endpoint");
   var toast = byId("toast");
   function setToast(msg) {
     toast.textContent = msg;
     if (msg) setTimeout(function () { if (toast.textContent === msg) toast.textContent = ""; }, 4000);
   }
+  function copyInput(inputEl, msg) {
+    var v = inputEl.value;
+    function done() { setToast(msg); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(v).then(done).catch(function () { inputEl.select(); document.execCommand("copy"); done(); });
+    } else { inputEl.select(); document.execCommand("copy"); done(); }
+  }
+  // The target endpoint Lakera Red connects to = this page's origin + the path.
+  endpointInput.value = window.location.origin + "/v1/chat/completions";
+  byId("copy-endpoint").addEventListener("click", function () { copyInput(endpointInput, "API endpoint copied to clipboard."); });
   function loadToken() {
     fetch("/admin/token", { credentials: "same-origin" })
       .then(function (r) { return r.json(); })
