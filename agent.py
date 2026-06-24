@@ -208,7 +208,8 @@ app.state.subscribers: Set["asyncio.Queue[Tuple[str, dict]]"] = set()
 # Interactions are grouped into conversations. The target is stateless (the
 # contract carries no session id), so a multi-round attack arrives as separate
 # requests whose message lists extend one another; _assign_conversation groups
-# them by prefix. Each conversation: {"id", "seq", "rounds": [event,...], "last_key"}.
+# them by prefix + our echoed reply. Each conversation:
+# {"id", "seq", "rounds": [event,...], "last_key", "match_key"}.
 app.state.conversations: deque = deque(maxlen=MAX_CONVERSATIONS)
 app.state.conversation_seq = 0
 app.state.stats = {
@@ -243,31 +244,46 @@ def _messages_key(messages: List[dict]) -> Tuple[Tuple[str, str], ...]:
     return tuple((m["role"], m["content"]) for m in messages)
 
 
-def _assign_conversation(messages: List[dict]) -> Tuple[dict, int]:
+def _assign_conversation(messages: List[dict], reply: str) -> Tuple[dict, int]:
     """Group a stateless request into a conversation and return (conv, round_no).
 
-    With no session id in the contract, we infer conversation membership: a
-    multi-round attack re-sends the whole transcript each turn, so round N's
-    message list begins with exactly all of round N-1's messages and appends
-    more. A new request that strictly extends an existing conversation's latest
-    round is treated as its next round; otherwise it starts a new conversation.
-    We match the longest such prefix so the deepest chain continues correctly.
+    The contract carries no session id, so we infer membership from the message
+    history. In stateless multi-turn, round N+1 re-sends the whole transcript:
+    round N's messages, then OUR reply to round N as an assistant turn, then the
+    new user turn(s). So a conversation's "expected next prefix" is its latest
+    round's messages PLUS our reply to that round.
 
-    Heuristic, by necessity: two unrelated probes that open with an identical
-    message would group. That's an acceptable trade for a live monitor.
+    We match a request to the conversation whose expected-next-prefix it begins
+    with (longest wins). Including our reply is what disambiguates conversations
+    that share a user-message opening -- common in scans that template the first
+    prompt -- because our replies to them differ; matching on the messages alone
+    would cross-assign interleaved rounds and split/merge conversations wrongly.
+
+    Fallback: if nothing matches tightly (e.g. a harness that doesn't echo our
+    reply verbatim), match on the round's messages alone, but only when the next
+    turn is an assistant turn (i.e. it still looks like a continuation). Failing
+    both, it's a new conversation.
     """
     key = _messages_key(messages)
-    best = None  # (matched_prefix_len, conversation)
-    for conv in app.state.conversations:
-        last_key = conv["last_key"]
-        n = len(last_key)
-        if n < len(key) and key[:n] == last_key:
-            if best is None or n > best[0]:
-                best = (n, conv)
 
-    if best is not None:
-        conv = best[1]
+    def longest_match(attr, require_assistant_next):
+        best = None  # (matched_len, conversation)
+        for conv in app.state.conversations:
+            ck = conv[attr]
+            n = len(ck)
+            if n < len(key) and key[:n] == ck:
+                if require_assistant_next and key[n][0] != "assistant":
+                    continue
+                if best is None or n > best[0]:
+                    best = (n, conv)
+        return best[1] if best else None
+
+    conv = longest_match("match_key", False) or longest_match("last_key", True)
+    reply_turn = ("assistant", reply)
+
+    if conv is not None:
         conv["last_key"] = key
+        conv["match_key"] = key + (reply_turn,)
         return conv, len(conv["rounds"]) + 1
 
     app.state.conversation_seq += 1
@@ -276,6 +292,7 @@ def _assign_conversation(messages: List[dict]) -> Tuple[dict, int]:
         "seq": app.state.conversation_seq,
         "rounds": [],
         "last_key": key,
+        "match_key": key + (reply_turn,),
     }
     app.state.conversations.append(conv)
     return conv, 1
@@ -384,9 +401,11 @@ async def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse
 
     status = classify(content, decoy, app.state.refusal_hints)
 
-    # Group this request into a conversation (see _assign_conversation).
+    # Group this request into a conversation (see _assign_conversation). Our
+    # reply is passed in: it's echoed back as an assistant turn in the next
+    # round, which is what lets us tell apart conversations with the same opening.
     sent_messages = [{"role": m.role, "content": m.content} for m in req.messages]
-    conv, round_no = _assign_conversation(sent_messages)
+    conv, round_no = _assign_conversation(sent_messages, content)
 
     # Update stats + live feed.
     app.state.stats["total"] += 1
